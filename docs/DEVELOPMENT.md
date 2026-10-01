@@ -13,15 +13,18 @@
 - Android SDK Platform-Tools 37.0.1
 - Gradle 8.11.1（由 `gradlew` 下载）
 
-当时没有安装模拟器系统镜像，也没有连接真实设备。因此可以完成编译和 JVM 单元测试，还不能在模拟器里启动应用。
+Cloud Agent 环境还包含模拟器系统镜像 `system-images;android-35;google_apis;x86_64` 和虚拟设备 `moye_api_35`（Pixel 6，Android 15，2 GB 内存，硬件键盘）。没有连接真实设备。编译、JVM 单元测试和模拟器启动都可以在这个环境里完成。
 
-构建前设置：
+登录 shell 会从 `/etc/profile.d/moye-android.sh` 载入下面这些变量。非登录 shell 需要自行导出：
 
 ```bash
 export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export ANDROID_HOME=/home/ubuntu/android-sdk
 export ANDROID_SDK_ROOT=/home/ubuntu/android-sdk
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 ```
+
+每次环境启动会把 `sdk.dir` 写到仓库根目录的 `local.properties`。该文件不入库。模拟器使用 `/dev/kvm`，启动时会把该设备设为可读写。
 
 ## 构建与测试
 
@@ -32,10 +35,13 @@ export ANDROID_SDK_ROOT=/home/ubuntu/android-sdk
 
 调试包位于 `app/build/outputs/apk/debug/app-debug.apk`。
 
-在已启动的模拟器或已连接的设备上安装：
+启动模拟器、安装并打开调试包：
 
 ```bash
+emulator -avd moye_api_35 -gpu swiftshader_indirect -no-audio -no-boot-anim -accel on
+adb wait-for-device
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n app.moye/.MainActivity
 ```
 
 Android Studio 可直接打开仓库根目录。模块 `:core` 是不依赖 Android 的 Kotlin 逻辑，模块 `:app` 是 Jetpack Compose 界面。
@@ -49,9 +55,9 @@ Android Studio 可直接打开仓库根目录。模块 `:core` 是不依赖 Andr
 
 ## 设备验收还没做的部分
 
-Issue 18 要求在模拟器和一台真实 Android 设备上走通主要流程。当前环境没有模拟器或真机，下面这些还需要在设备上确认：
+Issue 18 要求在模拟器和一台真实 Android 设备上走通主要流程。Cloud Agent 环境可以启动 `moye_api_35`。下面这些仍要在模拟器或真机上确认，蓝牙翻页器只能在真机上确认：
 
-- 系统文件选择器导入 TXT / EPUB，以及重启后仍能打开。
+- EPUB 导入，以及应用重启后已导入的作品仍能打开。TXT 导入并打开阅读已在 `moye_api_35` 上走过一遍。
 - 仿真翻页、竖排和不同屏幕尺寸下的实际观感。
 - 蓝牙翻页器或键盘的实体按键。
 - 断网时的书架和阅读，以及切到后台后阅读时长停止。
