@@ -3,6 +3,7 @@ package app.moye.core.settings
 import app.moye.core.model.PageTurnDirection
 import app.moye.core.model.ReaderTheme
 import app.moye.core.model.ReadingMode
+import app.moye.core.model.TypewriterSpeed
 import app.moye.core.model.WritingMode
 import app.moye.core.text.PlaybackTiming
 import kotlinx.serialization.Serializable
@@ -18,6 +19,8 @@ data class ReaderSettings(
     val theme: ReaderTheme = ReaderTheme.PAPER,
     val readingMode: ReadingMode = ReadingMode.SENTENCE,
     val playbackSpeed: Float = 1f,
+    val typewriterEnabled: Boolean = true,
+    val typewriterSpeed: TypewriterSpeed = TypewriterSpeed.NORMAL,
     val pageTurnDirection: PageTurnDirection = PageTurnDirection.HORIZONTAL,
     val txtWritingMode: WritingMode = WritingMode.HORIZONTAL,
     val languageTag: String = "",

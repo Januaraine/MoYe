@@ -6,16 +6,20 @@ import androidx.lifecycle.viewModelScope
 import app.moye.core.model.Chapter
 import app.moye.core.model.ContentError
 import app.moye.core.model.ReaderCommand
-import app.moye.core.model.ReadingMode
 import app.moye.core.model.ReadingUnit
 import app.moye.core.model.WritingMode
 import app.moye.core.model.effectiveWritingMode
 import app.moye.core.settings.FileSettingsStore
 import app.moye.core.settings.ReaderSettings
 import app.moye.core.text.ChapterNavigation
+import app.moye.core.text.PageComposer
+import app.moye.core.text.PageReveal
 import app.moye.core.text.PlaybackTiming
-import app.moye.core.text.ReadingProgress
+import app.moye.core.text.ReadingPage
+import app.moye.core.text.RevealStep
+import app.moye.core.text.SentenceReveal
 import app.moye.core.text.SentenceSegmenter
+import app.moye.core.text.TypewriterTiming
 import app.moye.core.time.ReadingTimer
 import app.moye.data.BookRepository
 import app.moye.data.ContentLoad
@@ -23,7 +27,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -42,6 +46,11 @@ enum class ReaderStatus {
     ERROR,
 }
 
+data class PageTurnVisual(
+    val forward: Boolean,
+    val moved: Boolean,
+)
+
 data class ReaderUiState(
     val status: ReaderStatus = ReaderStatus.LOADING,
     val error: ContentError? = null,
@@ -51,6 +60,13 @@ data class ReaderUiState(
     val writingModeLocked: Boolean = false,
     val text: String = "",
     val units: List<ReadingUnit> = emptyList(),
+    val pages: List<ReadingPage> = emptyList(),
+    val pageIndex: Int = 0,
+    val revealedCount: Int = 0,
+    val typedChars: Int = 0,
+    val typing: Boolean = false,
+    val layoutChars: Int = -1,
+    val layoutLines: Int = -1,
     val chapters: List<Chapter> = emptyList(),
     val offset: Int = 0,
     val playing: Boolean = false,
@@ -67,12 +83,15 @@ class ReaderViewModel(
     private var screenVisible = false
     private var activityResumed = false
     private var playJob: Job? = null
+    private var typeJob: Job? = null
+    private var typeGeneration = 0
+    private var layoutGeneration = 0
 
     private val _state = MutableStateFlow(ReaderUiState(settings = settingsStore.load()))
     val state: StateFlow<ReaderUiState> = _state.asStateFlow()
 
-    private val _pageTurns = MutableSharedFlow<Int>(extraBufferCapacity = 8)
-    val pageTurns: SharedFlow<Int> = _pageTurns.asSharedFlow()
+    private val _pageTurns = MutableSharedFlow<PageTurnVisual>(extraBufferCapacity = 8)
+    val pageTurns: SharedFlow<PageTurnVisual> = _pageTurns.asSharedFlow()
 
     init {
         viewModelScope.launch {
@@ -95,6 +114,9 @@ class ReaderViewModel(
                             units = SentenceSegmenter.segment(text),
                             chapters = loaded.book.chapters,
                             offset = loaded.record.charOffset.coerceIn(0, text.length.toLong()).toInt(),
+                            layoutChars = -1,
+                            layoutLines = -1,
+                            pages = emptyList(),
                         )
                     }
                     syncTimer()
@@ -115,8 +137,10 @@ class ReaderViewModel(
             activityResumed = activityAlreadyResumed
             refreshTitle()
             syncTimer()
+            if (_state.value.typing) restartTyping()
         } else {
             pausePlayback()
+            typeJob?.cancel()
             syncTimer()
         }
     }
@@ -124,11 +148,13 @@ class ReaderViewModel(
     fun onActivityResume() {
         activityResumed = true
         syncTimer()
+        if (_state.value.typing) restartTyping()
     }
 
     fun onActivityPause() {
         activityResumed = false
         pausePlayback()
+        typeJob?.cancel()
         syncTimer()
         flushBlocking()
     }
@@ -145,30 +171,91 @@ class ReaderViewModel(
         if (_state.value.status != ReaderStatus.READY) return false
         return when (command) {
             ReaderCommand.PREVIOUS -> {
-                if (_state.value.settings.readingMode == ReadingMode.SENTENCE) previousUnit() else _pageTurns.tryEmit(-1)
+                turnPage(forward = false)
                 true
             }
             ReaderCommand.NEXT -> {
-                if (_state.value.settings.readingMode == ReadingMode.SENTENCE) nextUnit() else _pageTurns.tryEmit(1)
+                turnPage(forward = true)
                 true
             }
             ReaderCommand.TOGGLE_PLAYBACK -> {
-                if (_state.value.settings.readingMode == ReadingMode.SENTENCE) togglePlayback()
+                togglePlayback()
                 true
             }
         }
     }
 
-    fun previousUnit() {
-        if (moveUnit(-1) && _state.value.playing) restartPlayback()
+    fun bindLayout(charsPerLine: Int, linesPerPage: Int) {
+        val snapshot = _state.value
+        if (snapshot.status != ReaderStatus.READY) return
+        val chars = charsPerLine.coerceAtLeast(1)
+        val lines = linesPerPage.coerceAtLeast(1)
+        if (snapshot.layoutChars == chars && snapshot.layoutLines == lines && snapshot.pages.isNotEmpty()) return
+        val generation = ++layoutGeneration
+        val opening = snapshot.pages.isEmpty()
+        val units = snapshot.units
+        val textLength = snapshot.text.length
+        viewModelScope.launch {
+            val pages = withContext(Dispatchers.Default) {
+                PageComposer.compose(units, chars, lines, textLength)
+            }
+            if (generation != layoutGeneration || _state.value.status != ReaderStatus.READY) return@launch
+            val offset = _state.value.offset
+            val index = SentenceReveal.pageIndexForOffset(pages, offset).coerceIn(0, pages.lastIndex)
+            val restored = SentenceReveal.restore(pages[index], offset)
+            val sentence = pages[index].sentences.getOrNull(restored.revealedCount - 1)
+            val typeCurrent = opening && _state.value.settings.typewriterEnabled && sentence != null && sentence.text.isNotEmpty()
+            val reveal = if (typeCurrent) {
+                restored.copy(typedChars = 0, typing = true)
+            } else {
+                restored.copy(typing = false)
+            }
+            _state.update {
+                it.copy(
+                    pages = pages,
+                    pageIndex = index,
+                    revealedCount = reveal.revealedCount,
+                    typedChars = reveal.typedChars,
+                    typing = reveal.typing,
+                    layoutChars = chars,
+                    layoutLines = lines,
+                    offset = reveal.anchorOffset,
+                )
+            }
+            restartTyping()
+            persistOffset()
+            if (_state.value.playing) restartPlayback()
+        }
     }
 
-    fun nextUnit() {
-        if (moveUnit(1)) {
-            if (_state.value.playing) restartPlayback()
-        } else if (_state.value.playing) {
-            pausePlayback()
+    fun onReadingTap() {
+        val snapshot = _state.value
+        if (snapshot.status != ReaderStatus.READY) return
+        val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: return
+        when (val step = SentenceReveal.onTap(page, snapshot.toReveal(), snapshot.settings.typewriterEnabled)) {
+            is RevealStep.Updated -> {
+                applyReveal(step.reveal)
+                if (snapshot.playing) restartPlayback()
+            }
+            RevealStep.NextPage -> turnPage(forward = true)
         }
+    }
+
+    fun turnPage(forward: Boolean): Boolean {
+        val snapshot = _state.value
+        if (snapshot.status != ReaderStatus.READY || snapshot.pages.isEmpty()) {
+            _pageTurns.tryEmit(PageTurnVisual(forward, false))
+            return false
+        }
+        val target = snapshot.pageIndex + if (forward) 1 else -1
+        if (target !in snapshot.pages.indices) {
+            _pageTurns.tryEmit(PageTurnVisual(forward, false))
+            return false
+        }
+        enterPage(target)
+        _pageTurns.tryEmit(PageTurnVisual(forward, true))
+        if (_state.value.playing) restartPlayback()
+        return true
     }
 
     fun togglePlayback() {
@@ -176,9 +263,29 @@ class ReaderViewModel(
     }
 
     fun seek(offset: Int) {
-        val total = _state.value.text.length
-        _state.update { it.copy(offset = offset.coerceIn(0, total)) }
+        val snapshot = _state.value
+        val clamped = offset.coerceIn(0, snapshot.text.length)
+        val pages = snapshot.pages
+        if (pages.isEmpty()) {
+            _state.update { it.copy(offset = clamped, typing = false) }
+            typeJob?.cancel()
+            persistOffset()
+            return
+        }
+        val index = SentenceReveal.pageIndexForOffset(pages, clamped)
+        val reveal = SentenceReveal.restore(pages[index], clamped)
+        _state.update {
+            it.copy(
+                offset = reveal.anchorOffset,
+                pageIndex = index,
+                revealedCount = reveal.revealedCount,
+                typedChars = reveal.typedChars,
+                typing = false,
+            )
+        }
+        typeJob?.cancel()
         persistOffset()
+        if (_state.value.playing) restartPlayback()
     }
 
     fun previousChapter() {
@@ -197,19 +304,23 @@ class ReaderViewModel(
 
     fun updateSettings(transform: (ReaderSettings) -> ReaderSettings) {
         val updated = settingsStore.update(transform)
-        val wasPlaying = _state.value.playing
         _state.update { current ->
+            val page = current.pages.getOrNull(current.pageIndex)
+            val sentence = page?.sentences?.getOrNull(current.revealedCount - 1)
+            val finishTyping = !updated.typewriterEnabled && current.typing && sentence != null
             current.copy(
                 settings = updated,
                 writingMode = if (current.writingModeLocked) current.writingMode else updated.txtWritingMode,
-                playing = wasPlaying && updated.readingMode == ReadingMode.SENTENCE,
+                typedChars = if (finishTyping) sentence.text.length else current.typedChars,
+                typing = if (finishTyping) false else current.typing,
             )
         }
-        if (_state.value.playing) restartPlayback() else pausePlayback()
+        restartTyping()
+        if (_state.value.playing) restartPlayback() else playJob?.cancel()
     }
 
     private fun startPlayback() {
-        if (_state.value.units.isEmpty()) return
+        if (_state.value.pages.isEmpty()) return
         _state.update { it.copy(playing = true) }
         restartPlayback()
     }
@@ -222,36 +333,99 @@ class ReaderViewModel(
 
     private fun restartPlayback() {
         playJob?.cancel()
+        if (!_state.value.playing) {
+            playJob = null
+            return
+        }
         playJob = viewModelScope.launch {
             while (isActive && _state.value.playing) {
+                if (_state.value.typing) {
+                    delay(30)
+                    continue
+                }
                 val snapshot = _state.value
-                val index = ReadingProgress.unitIndexForOffset(snapshot.units, snapshot.offset)
-                val unit = snapshot.units.getOrNull(index) ?: break
-                delay(PlaybackTiming.dwellMillis(unit.text, snapshot.settings.playbackSpeed))
-                if (!_state.value.playing) break
-                if (!moveUnit(1)) {
+                val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: break
+                if (page.sentences.isEmpty()) {
                     _state.update { it.copy(playing = false) }
                     break
+                }
+                val sentence = page.sentences.getOrNull((snapshot.revealedCount - 1).coerceAtLeast(0))
+                val marker = Triple(snapshot.pageIndex, snapshot.revealedCount, snapshot.typedChars)
+                delay(PlaybackTiming.dwellMillis(sentence?.text.orEmpty(), snapshot.settings.playbackSpeed))
+                val now = _state.value
+                if (!now.playing) break
+                if (now.typing) continue
+                if (Triple(now.pageIndex, now.revealedCount, now.typedChars) != marker) continue
+                val nowPage = now.pages.getOrNull(now.pageIndex) ?: break
+                when (val step = SentenceReveal.onTap(nowPage, now.toReveal(), now.settings.typewriterEnabled)) {
+                    is RevealStep.Updated -> applyReveal(step.reveal)
+                    RevealStep.NextPage -> {
+                        if (!turnPage(forward = true)) {
+                            _state.update { it.copy(playing = false) }
+                        }
+                        return@launch
+                    }
                 }
             }
         }
     }
 
-    private fun moveUnit(delta: Int): Boolean {
+    private fun restartTyping() {
+        val generation = ++typeGeneration
+        typeJob?.cancel()
         val snapshot = _state.value
-        if (snapshot.units.isEmpty()) return false
-        val index = ReadingProgress.unitIndexForOffset(snapshot.units, snapshot.offset)
-        val target = index + delta
-        if (target !in snapshot.units.indices) {
-            if (delta > 0) {
-                _state.update { it.copy(offset = snapshot.text.length) }
-                persistOffset()
+        if (!snapshot.typing || !snapshot.settings.typewriterEnabled) return
+        val delayMs = TypewriterTiming.millisPerCharacter(snapshot.settings.typewriterSpeed)
+        val pageIndex = snapshot.pageIndex
+        val revealedCount = snapshot.revealedCount
+        typeJob = viewModelScope.launch {
+            while (isActive && generation == typeGeneration) {
+                delay(delayMs)
+                if (generation != typeGeneration) break
+                val current = _state.value
+                if (!current.typing || current.pageIndex != pageIndex || current.revealedCount != revealedCount) break
+                val page = current.pages.getOrNull(current.pageIndex) ?: break
+                val next = SentenceReveal.tick(page, current.toReveal())
+                if (generation != typeGeneration) break
+                _state.update { state ->
+                    if (state.pageIndex != pageIndex || state.revealedCount != revealedCount || !state.typing) {
+                        state
+                    } else {
+                        state.copy(typedChars = next.typedChars, typing = next.typing)
+                    }
+                }
+                if (!next.typing) break
             }
-            return false
         }
-        _state.update { it.copy(offset = snapshot.units[target].startOffset) }
+    }
+
+    private fun enterPage(index: Int) {
+        val page = _state.value.pages[index]
+        val reveal = SentenceReveal.enter(page, _state.value.settings.typewriterEnabled)
+        _state.update {
+            it.copy(
+                pageIndex = index,
+                revealedCount = reveal.revealedCount,
+                typedChars = reveal.typedChars,
+                typing = reveal.typing,
+                offset = reveal.anchorOffset,
+            )
+        }
         persistOffset()
-        return true
+        restartTyping()
+    }
+
+    private fun applyReveal(reveal: PageReveal) {
+        _state.update {
+            it.copy(
+                revealedCount = reveal.revealedCount,
+                typedChars = reveal.typedChars,
+                typing = reveal.typing,
+                offset = reveal.anchorOffset,
+            )
+        }
+        persistOffset()
+        restartTyping()
     }
 
     private fun syncTimer() {
@@ -281,10 +455,20 @@ class ReaderViewModel(
 
     override fun onCleared() {
         playJob?.cancel()
+        typeJob?.cancel()
         if (timer.isRunning) timer.pause(now())
         flushBlocking()
         super.onCleared()
     }
+}
+
+private fun ReaderUiState.toReveal(): PageReveal {
+    return PageReveal(
+        revealedCount = revealedCount,
+        typedChars = typedChars,
+        typing = typing,
+        anchorOffset = offset,
+    )
 }
 
 class ReaderViewModelFactory(

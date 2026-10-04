@@ -19,6 +19,7 @@ data class BookRecord(
     val totalChars: Long = 0,
     val readingDurationMs: Long = 0,
     val importedAtEpochMs: Long = 0,
+    val coverRelativePath: String? = null,
 )
 
 @Serializable
@@ -71,6 +72,10 @@ class Library(private val store: FileLibraryStore) {
             val nextAuthor = author?.trim()?.ifEmpty { null }
             current.copy(title = nextTitle, author = nextAuthor)
         }
+    }
+
+    fun updateCover(id: String, coverRelativePath: String): BookRecord? {
+        return update(id) { current -> current.copy(coverRelativePath = coverRelativePath) }
     }
 
     fun updateProgress(id: String, charOffset: Long, totalChars: Long? = null): BookRecord? {

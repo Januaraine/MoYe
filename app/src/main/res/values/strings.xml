@@ -50,17 +50,12 @@
     <string name="chapters">目录</string>
     <string name="previous">上一页</string>
     <string name="next">下一页</string>
-    <string name="previous_sentence">上一句</string>
-    <string name="next_sentence">下一句</string>
     <string name="play">播放</string>
     <string name="pause">暂停</string>
-    <string name="sentence_position">%1$d / %2$d</string>
     <string name="page_position">%1$d / %2$d</string>
     <string name="empty_content">没有可显示的正文。</string>
     <string name="content_missing">找不到这本作品的本地文件。</string>
     <string name="content_corrupt">无法打开这本作品，文件可能已损坏。</string>
-    <string name="mode_sentence">逐句</string>
-    <string name="mode_paged">排版</string>
     <string name="font_size">字体大小</string>
     <string name="letter_spacing">字间距</string>
     <string name="line_spacing">行距</string>
@@ -68,7 +63,15 @@
     <string name="theme_paper">纸色</string>
     <string name="theme_light">白色</string>
     <string name="theme_dark">夜间</string>
-    <string name="playback_speed">播放速度</string>
+    <string name="playback_speed">自动播放速度</string>
+    <string name="playback_speed_hint">自动播放时，当前句完整出现后，再等待多久显示下一句。这不是逐字速度。</string>
+    <string name="typewriter_speed">文字显示速度</string>
+    <string name="typewriter_slow">慢</string>
+    <string name="typewriter_normal">标准</string>
+    <string name="typewriter_fast">快</string>
+    <string name="typewriter_disable">关闭逐字显示</string>
+    <string name="typewriter_hint">关闭后仍会逐句出现。点按会立刻显示完整的一句，而不是把整页一次铺开。</string>
+    <string name="cover">封面</string>
     <string name="speed_value">%1$.1f×</string>
     <string name="page_direction">翻页方向</string>
     <string name="direction_horizontal">横向</string>
@@ -80,5 +83,5 @@
     <string name="previous_chapter">上一章</string>
     <string name="next_chapter">下一章</string>
     <string name="no_chapters">这部作品没有可跳转的目录，仍可从头读到尾。</string>
-    <string name="tap_hint">点按右侧前进，左侧后退</string>
+    <string name="tap_hint">点按补全当前句，或显示下一句；本页都出现后，再点按进入下一页</string>
 </resources>

@@ -3,7 +3,6 @@ package app.moye.ui.reader
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -47,8 +46,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -67,15 +66,12 @@ import app.moye.ReaderKeyBridge
 import app.moye.core.model.ContentError
 import app.moye.core.model.PageTurnDirection
 import app.moye.core.model.ReaderTheme
-import app.moye.core.model.ReadingMode
-import app.moye.core.model.VerticalPage
+import app.moye.core.model.TypewriterSpeed
 import app.moye.core.model.WritingMode
 import app.moye.core.settings.ReaderSettings
 import app.moye.core.text.PlaybackTiming
-import app.moye.core.text.ReadingProgress
+import app.moye.core.text.SentenceReveal
 import app.moye.ui.theme.readerPalette
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 private enum class ReaderSheet { NONE, SETTINGS, CHAPTERS }
 
@@ -122,7 +118,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         }
     }
     LaunchedEffect(viewModel, pageTurns) {
-        viewModel.pageTurns.collect { delta -> pageTurns.request(delta > 0) }
+        viewModel.pageTurns.collect { visual -> pageTurns.play(visual.forward, visual.moved) }
     }
     androidx.compose.runtime.SideEffect {
         val window = (view.context as? Activity)?.window ?: return@SideEffect
@@ -171,27 +167,22 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                     color = palette.text,
                     textAlign = TextAlign.Center,
                 )
-                ReaderStatus.READY -> if (state.settings.readingMode == ReadingMode.SENTENCE) {
-                    SentenceBody(state, palette.text, palette.muted, viewModel::previousUnit, viewModel::nextUnit)
-                } else {
-                    PagedBody(
-                        state = state,
-                        textColor = palette.text,
-                        pageTurns = pageTurns,
-                        onSeek = viewModel::seek,
-                    )
-                }
+                ReaderStatus.READY -> ReadingBody(
+                    state = state,
+                    textColor = palette.text,
+                    muted = palette.muted,
+                    pageTurns = pageTurns,
+                    onTap = viewModel::onReadingTap,
+                    onTurn = { forward -> viewModel.turnPage(forward) },
+                    onLayout = viewModel::bindLayout,
+                )
             }
         }
         ReaderBottomBar(
             state = state,
             palette = palette,
-            onPrevious = {
-                if (state.settings.readingMode == ReadingMode.SENTENCE) viewModel.previousUnit() else pageTurns.request(false)
-            },
-            onNext = {
-                if (state.settings.readingMode == ReadingMode.SENTENCE) viewModel.nextUnit() else pageTurns.request(true)
-            },
+            onPrevious = { viewModel.turnPage(forward = false) },
+            onNext = { viewModel.turnPage(forward = true) },
             onToggle = viewModel::togglePlayback,
         )
     }
@@ -216,47 +207,128 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SentenceBody(
+private fun ReadingBody(
     state: ReaderUiState,
-    textColor: androidx.compose.ui.graphics.Color,
-    muted: androidx.compose.ui.graphics.Color,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
+    textColor: Color,
+    muted: Color,
+    pageTurns: PageTurnBridge,
+    onTap: () -> Unit,
+    onTurn: (Boolean) -> Unit,
+    onLayout: (Int, Int) -> Unit,
 ) {
-    val index = ReadingProgress.unitIndexForOffset(state.units, state.offset)
-    val unit = state.units.getOrNull(index)
     Column(Modifier.fillMaxSize()) {
-        Box(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .pointerInput(index) {
-                    detectTapGestures { position ->
-                        if (position.x < size.width * 0.35f) onPrevious() else onNext()
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val density = LocalDensity.current
+            val fontPx = with(density) { state.settings.fontSizeSp.sp.toPx() }
+            val paddingPx = with(density) { 8.dp.toPx() }
+            val textWidth = (with(density) { maxWidth.toPx() } - with(density) { 56.dp.toPx() }).coerceAtLeast(fontPx)
+            val textHeight = (with(density) { maxHeight.toPx() } - with(density) { 24.dp.toPx() }).coerceAtLeast(fontPx)
+            val charsPerLine: Int
+            val linesPerPage: Int
+            if (state.writingMode == WritingMode.VERTICAL) {
+                val (chars, columns) = verticalCapacity(
+                    textWidth,
+                    textHeight,
+                    fontPx,
+                    state.settings.letterSpacingEm,
+                    state.settings.lineHeight,
+                    paddingPx,
+                )
+                charsPerLine = chars
+                linesPerPage = columns
+            } else {
+                val charWidth = fontPx * (1f + state.settings.letterSpacingEm)
+                val lineHeightPx = fontPx * state.settings.lineHeight
+                charsPerLine = (textWidth / charWidth).toInt().coerceAtLeast(1)
+                val rawLines = (textHeight / lineHeightPx).toInt().coerceAtLeast(1)
+                linesPerPage = if (rawLines > 2) rawLines - 1 else rawLines
+            }
+            LaunchedEffect(state.text, charsPerLine, linesPerPage, state.writingMode) {
+                onLayout(charsPerLine, linesPerPage)
+            }
+            if (state.pages.isEmpty()) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center), color = textColor)
+            } else {
+                val page = state.pages.getOrNull(state.pageIndex)
+                SimulatedPage(
+                    direction = state.settings.pageTurnDirection,
+                    bridge = pageTurns,
+                    onTap = onTap,
+                    onTurn = onTurn,
+                ) {
+                    if (page == null || page.sentences.isEmpty()) {
+                        Text(
+                            stringResource(R.string.empty_content),
+                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                            color = textColor,
+                            textAlign = TextAlign.Center,
+                        )
+                    } else if (state.writingMode == WritingMode.VERTICAL) {
+                        val visible = visiblePageText(page.sentences, state.revealedCount, state.typedChars)
+                        val verticalPage = remember(visible, textWidth, textHeight, fontPx, state.settings.letterSpacingEm, state.settings.lineHeight) {
+                            paginateVerticalFor(
+                                visible,
+                                textWidth,
+                                textHeight,
+                                fontPx,
+                                state.settings.letterSpacingEm,
+                                state.settings.lineHeight,
+                                paddingPx,
+                            ).first()
+                        }
+                        VerticalPageCanvas(
+                            text = visible,
+                            page = verticalPage,
+                            color = textColor,
+                            fontSizePx = fontPx,
+                            letterSpacingEm = state.settings.letterSpacingEm,
+                            lineHeight = state.settings.lineHeight,
+                            paddingPx = paddingPx,
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
+                        )
+                    } else {
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 28.dp, vertical = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy((state.settings.fontSizeSp * state.settings.lineHeight * 0.65f).dp),
+                        ) {
+                            val shownCount = state.revealedCount.coerceIn(0, page.sentences.size)
+                            for (index in 0 until shownCount) {
+                                val sentence = page.sentences[index]
+                                val text = if (index == shownCount - 1) {
+                                    SentenceReveal.visiblePrefix(sentence.text, state.typedChars)
+                                } else {
+                                    sentence.text
+                                }
+                                Text(
+                                    text = text,
+                                    color = textColor,
+                                    fontFamily = FontFamily.Serif,
+                                    fontSize = state.settings.fontSizeSp.sp,
+                                    letterSpacing = state.settings.letterSpacingEm.em,
+                                    lineHeight = (state.settings.fontSizeSp * state.settings.lineHeight).sp,
+                                    textAlign = TextAlign.Start,
+                                )
+                            }
+                        }
                     }
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = unit?.text?.trim().orEmpty().ifBlank { stringResource(R.string.empty_content) },
-                modifier = Modifier.padding(horizontal = 28.dp, vertical = 20.dp),
-                color = textColor,
-                fontFamily = FontFamily.Serif,
-                fontSize = state.settings.fontSizeSp.sp,
-                letterSpacing = state.settings.letterSpacingEm.em,
-                lineHeight = (state.settings.fontSizeSp * state.settings.lineHeight).sp,
-                textAlign = TextAlign.Start,
-            )
+                }
+            }
         }
         Text(
-            stringResource(R.string.sentence_position, (index + 1).coerceAtLeast(0), state.units.size),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            stringResource(
+                R.string.page_position,
+                (state.pageIndex + 1).coerceAtLeast(1),
+                state.pages.size.coerceAtLeast(1),
+            ),
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             color = muted,
             textAlign = TextAlign.Center,
         )
         Text(
             stringResource(R.string.tap_hint),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
             color = muted,
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.labelMedium,
@@ -264,109 +336,19 @@ private fun SentenceBody(
     }
 }
 
-@Composable
-private fun PagedBody(
-    state: ReaderUiState,
-    textColor: androidx.compose.ui.graphics.Color,
-    pageTurns: PageTurnBridge,
-    onSeek: (Int) -> Unit,
-) {
-    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        val density = LocalDensity.current
-        val widthPx = with(density) { maxWidth.toPx() }.toInt()
-        val heightPx = (with(density) { maxHeight.toPx() } - with(density) { 32.dp.toPx() }).toInt().coerceAtLeast(1)
-        val fontPx = with(density) { state.settings.fontSizeSp.sp.toPx() }
-        val paddingPx = with(density) { 8.dp.toPx() }
-        if (state.writingMode == WritingMode.VERTICAL) {
-            val pages = remember(state.text, widthPx, heightPx, fontPx, state.settings.letterSpacingEm, state.settings.lineHeight) {
-                paginateVerticalFor(
-                    state.text,
-                    widthPx.toFloat(),
-                    heightPx.toFloat(),
-                    fontPx,
-                    state.settings.letterSpacingEm,
-                    state.settings.lineHeight,
-                    paddingPx,
-                )
-            }
-            val index = ReadingProgress.verticalPageIndex(pages, state.offset).coerceAtLeast(0)
-            val page = pages.getOrNull(index) ?: VerticalPage(0, 0, emptyList())
-            SimulatedPage(
-                direction = state.settings.pageTurnDirection,
-                bridge = pageTurns,
-                onTurn = { forward ->
-                    val target = pages.getOrNull(index + if (forward) 1 else -1) ?: return@SimulatedPage false
-                    onSeek(target.start)
-                    true
-                },
-            ) {
-                Column(Modifier.fillMaxSize()) {
-                    VerticalPageCanvas(
-                        text = state.text,
-                        page = page,
-                        color = textColor,
-                        fontSizePx = fontPx,
-                        letterSpacingEm = state.settings.letterSpacingEm,
-                        lineHeight = state.settings.lineHeight,
-                        paddingPx = paddingPx,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        stringResource(R.string.page_position, index + 1, pages.size.coerceAtLeast(1)),
-                        color = textColor.copy(alpha = 0.7f),
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
-        } else {
-            var pagination by remember(state.text, widthPx, heightPx, fontPx, state.settings.letterSpacingEm, state.settings.lineHeight) {
-                mutableStateOf<HorizontalPagination?>(null)
-            }
-            LaunchedEffect(state.text, widthPx, heightPx, fontPx, state.settings.letterSpacingEm, state.settings.lineHeight) {
-                pagination = null
-                pagination = withContext(Dispatchers.Default) {
-                    buildHorizontalPagination(
-                        state.text,
-                        widthPx,
-                        heightPx,
-                        fontPx,
-                        state.settings.letterSpacingEm,
-                        state.settings.lineHeight,
-                    )
-                }
-            }
-            val ready = pagination
-            if (ready == null) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center), color = textColor)
-            } else {
-                val index = linePageIndex(ready.pages, state.offset)
-                val page = ready.pages[index]
-                SimulatedPage(
-                    direction = state.settings.pageTurnDirection,
-                    bridge = pageTurns,
-                    onTurn = { forward ->
-                        val target = ready.pages.getOrNull(index + if (forward) 1 else -1) ?: return@SimulatedPage false
-                        onSeek(target.start)
-                        true
-                    },
-                ) {
-                    Column(Modifier.fillMaxSize()) {
-                        HorizontalPageCanvas(
-                            pagination = ready,
-                            page = page,
-                            color = textColor,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            stringResource(R.string.page_position, index + 1, ready.pages.size),
-                            color = textColor.copy(alpha = 0.7f),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                        )
-                    }
-                }
-            }
+private fun visiblePageText(
+    sentences: List<app.moye.core.model.ReadingUnit>,
+    revealedCount: Int,
+    typedChars: Int,
+): String {
+    val count = revealedCount.coerceIn(0, sentences.size)
+    return buildString {
+        for (index in 0 until count) {
+            if (index > 0) append('\n')
+            val sentence = sentences[index]
+            append(
+                if (index == count - 1) SentenceReveal.visiblePrefix(sentence.text, typedChars) else sentence.text,
+            )
         }
     }
 }
@@ -379,27 +361,24 @@ private fun ReaderBottomBar(
     onNext: () -> Unit,
     onToggle: () -> Unit,
 ) {
-    val sentence = state.settings.readingMode == ReadingMode.SENTENCE
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TextButton(onClick = onPrevious) {
-            Text(stringResource(if (sentence) R.string.previous_sentence else R.string.previous), color = palette.accent)
+            Text(stringResource(R.string.previous), color = palette.accent)
         }
-        if (sentence) {
-            IconButton(onClick = onToggle) {
-                Icon(
-                    if (state.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = stringResource(if (state.playing) R.string.pause else R.string.play),
-                    tint = palette.accent,
-                )
-            }
-            Text(stringResource(R.string.speed_value, state.settings.playbackSpeed), color = palette.muted)
+        IconButton(onClick = onToggle) {
+            Icon(
+                if (state.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = stringResource(if (state.playing) R.string.pause else R.string.play),
+                tint = palette.accent,
+            )
         }
+        Text(stringResource(R.string.speed_value, state.settings.playbackSpeed), color = palette.muted)
         TextButton(onClick = onNext) {
-            Text(stringResource(if (sentence) R.string.next_sentence else R.string.next), color = palette.accent)
+            Text(stringResource(R.string.next), color = palette.accent)
         }
     }
 }
@@ -420,19 +399,18 @@ private fun SettingsSheet(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(stringResource(R.string.settings), color = textColor, style = MaterialTheme.typography.titleLarge, fontFamily = FontFamily.Serif)
-        Text(stringResource(R.string.mode_sentence), color = muted)
+        Text(stringResource(R.string.typewriter_speed), color = textColor)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = settings.readingMode == ReadingMode.SENTENCE,
-                onClick = { onChange { it.copy(readingMode = ReadingMode.SENTENCE) } },
-                label = { Text(stringResource(R.string.mode_sentence)) },
-            )
-            FilterChip(
-                selected = settings.readingMode == ReadingMode.PAGED,
-                onClick = { onChange { it.copy(readingMode = ReadingMode.PAGED) } },
-                label = { Text(stringResource(R.string.mode_paged)) },
-            )
+            TypewriterChip(TypewriterSpeed.SLOW, R.string.typewriter_slow, settings.typewriterSpeed, onChange)
+            TypewriterChip(TypewriterSpeed.NORMAL, R.string.typewriter_normal, settings.typewriterSpeed, onChange)
+            TypewriterChip(TypewriterSpeed.FAST, R.string.typewriter_fast, settings.typewriterSpeed, onChange)
         }
+        FilterChip(
+            selected = !settings.typewriterEnabled,
+            onClick = { onChange { it.copy(typewriterEnabled = !it.typewriterEnabled) } },
+            label = { Text(stringResource(R.string.typewriter_disable)) },
+        )
+        Text(stringResource(R.string.typewriter_hint), color = muted, style = MaterialTheme.typography.bodySmall)
         SettingSlider(stringResource(R.string.font_size), settings.fontSizeSp, 14f, 36f, textColor) { value ->
             onChange { it.copy(fontSizeSp = value) }
         }
@@ -457,6 +435,7 @@ private fun SettingsSheet(
         ) { value ->
             onChange { it.copy(playbackSpeed = value) }
         }
+        Text(stringResource(R.string.playback_speed_hint), color = muted, style = MaterialTheme.typography.bodySmall)
         Text(stringResource(R.string.page_direction), color = textColor)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
@@ -493,6 +472,20 @@ private fun SettingsSheet(
             }
         }
     }
+}
+
+@Composable
+private fun TypewriterChip(
+    speed: TypewriterSpeed,
+    label: Int,
+    selected: TypewriterSpeed,
+    onChange: ((ReaderSettings) -> ReaderSettings) -> Unit,
+) {
+    FilterChip(
+        selected = selected == speed,
+        onClick = { onChange { it.copy(typewriterSpeed = speed) } },
+        label = { Text(stringResource(label)) },
+    )
 }
 
 @Composable

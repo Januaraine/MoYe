@@ -9,6 +9,7 @@ import app.moye.core.settings.FileSettingsStore
 import app.moye.core.settings.ReaderSettings
 import app.moye.core.model.PageTurnDirection
 import app.moye.core.model.ReadingMode
+import app.moye.core.model.TypewriterSpeed
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -109,6 +110,8 @@ class LibraryTest {
                 pageTurnDirection = PageTurnDirection.VERTICAL,
                 txtWritingMode = WritingMode.VERTICAL,
                 playbackSpeed = 1.5f,
+                typewriterEnabled = false,
+                typewriterSpeed = TypewriterSpeed.FAST,
                 languageTag = "en",
             ),
         )
@@ -118,9 +121,42 @@ class LibraryTest {
         assertEquals(PageTurnDirection.VERTICAL, loaded.pageTurnDirection)
         assertEquals(WritingMode.VERTICAL, loaded.txtWritingMode)
         assertEquals(1.5f, loaded.playbackSpeed)
+        assertFalse(loaded.typewriterEnabled)
+        assertEquals(TypewriterSpeed.FAST, loaded.typewriterSpeed)
         assertEquals("en", loaded.languageTag)
         assertEquals(WritingMode.VERTICAL, effectiveWritingMode(null, loaded.txtWritingMode))
         assertEquals(WritingMode.HORIZONTAL, effectiveWritingMode(WritingMode.HORIZONTAL, WritingMode.VERTICAL))
+    }
+
+    @Test
+    fun olderSettingsWithoutTypewriterFieldsStayReadable() {
+        val file = File(Files.createTempDirectory("moye-old-settings").toFile(), "settings.json")
+        file.writeText("""{"fontSizeSp":18.0,"playbackSpeed":1.0,"languageTag":"zh"}""")
+        val loaded = FileSettingsStore(file).load()
+        assertTrue(loaded.typewriterEnabled)
+        assertEquals(TypewriterSpeed.NORMAL, loaded.typewriterSpeed)
+        assertEquals("zh", loaded.languageTag)
+    }
+
+    @Test
+    fun coverFileIsRemovedOnlyWithThatBooksCopy() {
+        val dir = Files.createTempDirectory("moye-cover-file").toFile()
+        val files = BookFiles(File(dir, "books"))
+        val library = Library(FileLibraryStore(File(dir, "library.json")))
+        val first = File(dir, "src-a.txt").apply { writeText("one") }
+        val second = File(dir, "src-b.txt").apply { writeText("two") }
+        val firstPath = files.place("a", "txt", first)
+        val secondPath = files.place("b", "txt", second)
+        val firstCover = files.placeCover("a", "jpg", byteArrayOf(1, 2, 3))
+        files.placeCover("b", "png", byteArrayOf(4, 5))
+        library.add(sample("a", "Alpha").copy(relativePath = firstPath, coverRelativePath = firstCover))
+        library.add(sample("b", "Beta").copy(relativePath = secondPath, coverRelativePath = "b/cover.png"))
+        assertEquals("b/cover.png", library.updateCover("b", "b/cover.png")?.coverRelativePath)
+        val removal = BookRemoval(library) { path -> files.deleteCopy(path) }
+        assertEquals(RemovalResult.RemovedDeletedCopy, removal.remove("a", RemovalChoice.DELETE_COPY))
+        assertFalse(File(dir, "books/a/cover.jpg").exists())
+        assertTrue(File(dir, "books/b/cover.png").exists())
+        assertTrue(File(dir, "books/b/book.txt").exists())
     }
 
     @Test
