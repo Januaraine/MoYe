@@ -83,5 +83,4 @@
     <string name="previous_chapter">Previous chapter</string>
     <string name="next_chapter">Next chapter</string>
     <string name="no_chapters">This book has no chapter list. You can still read it from start to finish.</string>
-    <string name="tap_hint">Tap to finish the current sentence, or to show the next one. After the page is complete, tap again for the next page.</string>
 </resources>

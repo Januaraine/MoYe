@@ -11,6 +11,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -22,6 +23,18 @@ sealed class ParseResult {
 
 object EpubParser {
     private const val MAX_COVER_BYTES = 8 * 1024 * 1024
+
+    fun readCover(file: File): EmbeddedCover? {
+        if (!file.isFile) return null
+        return try {
+            ZipFile(file).use { zip ->
+                val pack = readPackage(zip) ?: return null
+                extractCover(zip, pack.opf, pack.opfDir, pack.manifest)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun parse(file: File): ParseResult {
         if (!file.isFile) return ParseResult.Err(ImportError.UNREADABLE)
@@ -40,21 +53,12 @@ object EpubParser {
     }
 
     private fun parseArchive(zip: ZipFile): ParseResult {
-        val containerBytes = readEntry(zip, "META-INF/container.xml")
-            ?: return ParseResult.Err(ImportError.CORRUPT)
-        val container = parseXml(containerBytes) ?: return ParseResult.Err(ImportError.CORRUPT)
-        val opfPath = container.getElementsByTagName("*").let { nodes ->
-            (0 until nodes.length).firstNotNullOfOrNull { index ->
-                val node = nodes.item(index) as? Element
-                if (node?.localName == "rootfile") node.getAttribute("full-path") else null
-            }
-        }?.takeIf { it.isNotBlank() } ?: return ParseResult.Err(ImportError.CORRUPT)
-        val opfBytes = readEntry(zip, opfPath) ?: return ParseResult.Err(ImportError.CORRUPT)
-        val opf = parseXml(opfBytes) ?: return ParseResult.Err(ImportError.CORRUPT)
-        val opfDir = opfPath.substringBeforeLast('/', "")
+        val pack = readPackage(zip) ?: return ParseResult.Err(ImportError.CORRUPT)
+        val opf = pack.opf
+        val opfDir = pack.opfDir
+        val manifest = pack.manifest
         val title = firstText(opf, "title")
         val author = firstText(opf, "creator")
-        val manifest = manifestItems(opf)
         val spine = spineRefs(opf)
         if (spine.isEmpty()) return ParseResult.Err(ImportError.CORRUPT)
 
@@ -106,24 +110,197 @@ object EpubParser {
         )
     }
 
+    private fun readPackage(zip: ZipFile): EpubPackage? {
+        val containerBytes = readEntry(zip, "META-INF/container.xml") ?: return null
+        val container = parseXml(containerBytes) ?: return null
+        val opfPath = container.getElementsByTagName("*").let { nodes ->
+            (0 until nodes.length).firstNotNullOfOrNull { index ->
+                val node = nodes.item(index) as? Element
+                if (node?.localName == "rootfile") node.getAttribute("full-path") else null
+            }
+        }?.takeIf { it.isNotBlank() } ?: return null
+        val opfBytes = readEntry(zip, opfPath) ?: return null
+        val opf = parseXml(opfBytes) ?: return null
+        return EpubPackage(opf, opfPath.substringBeforeLast('/', ""), manifestItems(opf))
+    }
+
     private fun extractCover(
         zip: ZipFile,
         opf: Element,
         opfDir: String,
         manifest: List<ManifestItem>,
     ): EmbeddedCover? {
-        val byProperty = manifest.firstOrNull { item ->
-            isImage(item.mediaType) &&
-                item.properties.split(Regex("\\s+")).any { it.equals("cover-image", ignoreCase = true) }
+        val explicit = mutableListOf<EmbeddedCover>()
+        manifest.filter { isRaster(it) && hasProperty(it, "cover-image") }.forEach { item ->
+            loadRaster(zip, opfDir, item)?.let(explicit::add)
         }
-        val coverId = opf.descendants("meta").firstOrNull { meta ->
-            meta.getAttribute("name").equals("cover", ignoreCase = true)
-        }?.getAttribute("content")?.takeIf { it.isNotBlank() }
-        val byMeta = coverId?.let { id -> manifest.firstOrNull { it.id == id && isImage(it.mediaType) } }
-        val chosen = byProperty ?: byMeta ?: return null
-        val bytes = readEntry(zip, resolvePath(opfDir, chosen.href)) ?: return null
-        if (bytes.isEmpty() || bytes.size > MAX_COVER_BYTES) return null
-        return EmbeddedCover(chosen.mediaType, bytes)
+        coverReferences(opf).forEach { reference ->
+            resolveCoverReference(zip, opfDir, manifest, opfDir, reference)?.let(explicit::add)
+        }
+        opf.descendants("reference").firstOrNull { reference ->
+            hasToken(reference.getAttribute("type"), "cover")
+        }?.getAttribute("href")?.takeIf { it.isNotBlank() }?.let { href ->
+            resolveCoverReference(zip, opfDir, manifest, opfDir, href)?.let(explicit::add)
+        }
+        landmarkCover(zip, opfDir, manifest)?.let(explicit::add)
+        explicit.maxByOrNull { it.bytes.size }?.let { return it }
+
+        val named = manifest.filter { looksLikeCoverName(it.id) || looksLikeCoverName(it.href) }
+        largestCover(zip, opfDir, manifest, named)?.let { return it }
+        looseCover(zip)?.let { return it }
+        return null
+    }
+
+    private fun coverReferences(opf: Element): List<String> {
+        return opf.descendants("meta").mapNotNull { meta ->
+            val name = meta.getAttribute("name")
+            val property = meta.getAttribute("property")
+            val content = meta.getAttribute("content").ifBlank { meta.textContent.trim() }
+            val marked = name.equals("cover", ignoreCase = true) ||
+                property.equals("cover", ignoreCase = true) ||
+                property.endsWith(":cover", ignoreCase = true)
+            content.takeIf { marked && it.isNotBlank() }
+        }
+    }
+
+    private fun landmarkCover(zip: ZipFile, opfDir: String, manifest: List<ManifestItem>): EmbeddedCover? {
+        val nav = manifest.find { hasProperty(it, "nav") } ?: return null
+        val path = resolvePath(opfDir, nav.href)
+        val html = readEntry(zip, path)?.let { TxtDecoder.decode(it) } ?: return null
+        val href = landmarkCoverHref(html) ?: return null
+        return resolveCoverReference(zip, opfDir, manifest, path.substringBeforeLast('/', ""), href)
+    }
+
+    private fun landmarkCoverHref(html: String): String? {
+        val anchor = Regex("""<a\b([^>]*)>""", RegexOption.IGNORE_CASE)
+        val hrefPattern = Regex("""\bhref\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        val typePattern = Regex("""epub:type\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        return anchor.findAll(html).firstNotNullOfOrNull { match ->
+            val attrs = match.groupValues[1]
+            val kinds = typePattern.find(attrs)?.groupValues?.get(1)?.split(Regex("\\s+")).orEmpty()
+            if (kinds.none { it.equals("cover", ignoreCase = true) }) return@firstNotNullOfOrNull null
+            hrefPattern.find(attrs)?.groupValues?.get(1)
+        }
+    }
+
+    private fun resolveCoverReference(
+        zip: ZipFile,
+        opfDir: String,
+        manifest: List<ManifestItem>,
+        baseDir: String,
+        reference: String,
+    ): EmbeddedCover? {
+        if (reference.startsWith("data:image", ignoreCase = true)) return decodeDataImage(reference)
+        val clean = URLDecoder.decode(reference.substringBefore('#').substringBefore('?'), StandardCharsets.UTF_8)
+        val item = manifest.firstOrNull { it.id == reference || it.id == clean }
+            ?: manifest.firstOrNull { hrefMatches(it.href, clean) || hrefMatches(resolvePath(opfDir, it.href), resolvePath(baseDir, clean)) }
+        if (item != null) {
+            if (isRaster(item)) return loadRaster(zip, opfDir, item)
+            if (isDocument(item)) {
+                val path = resolvePath(opfDir, item.href)
+                val html = readEntry(zip, path)?.let { TxtDecoder.decode(it) } ?: return null
+                return largestImageInHtml(zip, opfDir, manifest, path.substringBeforeLast('/', ""), html)
+            }
+            return null
+        }
+        return loadRasterPath(zip, resolvePath(baseDir.ifBlank { opfDir }, clean))
+    }
+
+    private fun largestCover(
+        zip: ZipFile,
+        opfDir: String,
+        manifest: List<ManifestItem>,
+        items: List<ManifestItem>,
+    ): EmbeddedCover? {
+        return items.mapNotNull { item ->
+            when {
+                isRaster(item) -> loadRaster(zip, opfDir, item)
+                isDocument(item) -> {
+                    val path = resolvePath(opfDir, item.href)
+                    val html = readEntry(zip, path)?.let { TxtDecoder.decode(it) } ?: return@mapNotNull null
+                    largestImageInHtml(zip, opfDir, manifest, path.substringBeforeLast('/', ""), html)
+                }
+                else -> null
+            }
+        }.maxByOrNull { it.bytes.size }
+    }
+
+    private fun largestImageInHtml(
+        zip: ZipFile,
+        opfDir: String,
+        manifest: List<ManifestItem>,
+        baseDir: String,
+        html: String,
+    ): EmbeddedCover? {
+        val pattern = Regex("""(?:\bsrc|\bhref)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        return pattern.findAll(html).mapNotNull { match ->
+            val ref = match.groupValues[1].trim()
+            when {
+                ref.startsWith("data:image", ignoreCase = true) -> decodeDataImage(ref)
+                imageExtension(ref) != null || manifest.any { isRaster(it) && hrefMatches(it.href, ref) } ->
+                    resolveCoverReference(zip, opfDir, manifest, baseDir, ref)
+                else -> null
+            }
+        }.maxByOrNull { it.bytes.size }
+    }
+
+    private fun looseCover(zip: ZipFile): EmbeddedCover? {
+        return zip.entries().asSequence()
+            .filter { !it.isDirectory && looksLikeCoverName(it.name) && imageExtension(it.name) != null }
+            .mapNotNull { entry ->
+                val bytes = try {
+                    zip.getInputStream(entry).use { it.readBytes() }
+                } catch (_: Exception) {
+                    return@mapNotNull null
+                }
+                val media = mediaTypeFor(entry.name) ?: return@mapNotNull null
+                rasterCover(media, bytes)
+            }
+            .maxByOrNull { it.bytes.size }
+    }
+
+    private fun loadRaster(zip: ZipFile, opfDir: String, item: ManifestItem): EmbeddedCover? {
+        if (!isRaster(item)) return null
+        val bytes = readEntry(zip, resolvePath(opfDir, item.href)) ?: return null
+        val media = item.mediaType.takeIf { isImage(it) } ?: mediaTypeFor(item.href) ?: return null
+        return rasterCover(media, bytes)
+    }
+
+    private fun loadRasterPath(zip: ZipFile, path: String): EmbeddedCover? {
+        val media = mediaTypeFor(path) ?: return null
+        val bytes = readEntry(zip, path) ?: return null
+        return rasterCover(media, bytes)
+    }
+
+    private fun rasterCover(mediaType: String, bytes: ByteArray): EmbeddedCover? {
+        if (bytes.isEmpty() || bytes.size > MAX_COVER_BYTES || !isImage(mediaType)) return null
+        return EmbeddedCover(mediaType, bytes)
+    }
+
+    private fun decodeDataImage(src: String): EmbeddedCover? {
+        val header = src.substringAfter("data:").substringBefore(',')
+        val payload = src.substringAfter("base64,", "")
+        if (!header.contains("base64", ignoreCase = true) || payload.isBlank()) return null
+        val media = header.substringBefore(';').ifBlank { "image/jpeg" }
+        val bytes = try {
+            Base64.getDecoder().decode(payload.trim())
+        } catch (_: IllegalArgumentException) {
+            return null
+        }
+        return rasterCover(media, bytes)
+    }
+
+    private fun isRaster(item: ManifestItem): Boolean {
+        return isImage(item.mediaType) || imageExtension(item.href) != null
+    }
+
+    private fun isDocument(item: ManifestItem): Boolean {
+        val type = item.mediaType
+        return type.contains("html") || type.contains("svg") ||
+            item.href.endsWith(".xhtml", ignoreCase = true) ||
+            item.href.endsWith(".html", ignoreCase = true) ||
+            item.href.endsWith(".htm", ignoreCase = true) ||
+            item.href.endsWith(".svg", ignoreCase = true)
     }
 
     private fun isImage(mediaType: String): Boolean {
@@ -131,6 +308,50 @@ object EpubParser {
             "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp" -> true
             else -> false
         }
+    }
+
+    private fun mediaTypeFor(path: String): String? {
+        return when (imageExtension(path)) {
+            "jpg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            else -> null
+        }
+    }
+
+    private fun imageExtension(path: String): String? {
+        return when (path.substringBefore('?').substringBefore('#').substringAfterLast('.').lowercase()) {
+            "jpg", "jpeg" -> "jpg"
+            "png" -> "png"
+            "gif" -> "gif"
+            "webp" -> "webp"
+            else -> null
+        }
+    }
+
+    private fun looksLikeCoverName(value: String): Boolean {
+        val stem = value.substringAfterLast('/').substringBeforeLast('.').lowercase()
+        return stem == "cover" || stem == "cover-image" || stem == "coverimage" ||
+            stem == "frontcover" || stem == "front-cover" || stem == "titlepage" ||
+            stem == "title-page" || stem == "coverpage" || stem == "bookcover" ||
+            stem.startsWith("cover-") || stem.startsWith("cover_")
+    }
+
+    private fun hasProperty(item: ManifestItem, token: String): Boolean {
+        return hasToken(item.properties, token)
+    }
+
+    private fun hasToken(value: String, token: String): Boolean {
+        return value.split(Regex("\\s+")).any { it.equals(token, ignoreCase = true) }
+    }
+
+    private fun hrefMatches(href: String, wanted: String): Boolean {
+        val left = href.substringBefore('#').substringBefore('?')
+        val right = wanted.substringBefore('#').substringBefore('?')
+        return left.equals(right, ignoreCase = true) ||
+            left.endsWith("/$right", ignoreCase = true) ||
+            right.endsWith("/$left", ignoreCase = true)
     }
 
     private fun chapters(
@@ -329,6 +550,12 @@ object EpubParser {
             null
         }
     }
+
+    private data class EpubPackage(
+        val opf: Element,
+        val opfDir: String,
+        val manifest: List<ManifestItem>,
+    )
 
     private data class ManifestItem(
         val id: String,
