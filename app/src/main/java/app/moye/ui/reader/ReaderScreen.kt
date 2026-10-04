@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -46,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
@@ -95,7 +99,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     )
     val state by viewModel.state.collectAsState()
     var sheet by remember { mutableStateOf(ReaderSheet.NONE) }
-    val pageTurns = remember { PageTurnBridge() }
+    var chromeVisible by remember { mutableStateOf(false) }
     val palette = readerPalette(state.settings.theme)
     val view = LocalView.current
 
@@ -117,9 +121,6 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             viewModel.onScreenVisible(false, false)
         }
     }
-    LaunchedEffect(viewModel, pageTurns) {
-        viewModel.pageTurns.collect { visual -> pageTurns.play(visual.forward, visual.moved) }
-    }
     androidx.compose.runtime.SideEffect {
         val window = (view.context as? Activity)?.window ?: return@SideEffect
         WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = palette.background.luminance() > 0.5f
@@ -131,13 +132,18 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
-            .background(palette.background),
+            .background(palette.background)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
+        val headerVisible = chromeVisible || state.status == ReaderStatus.ERROR
         Row(
-            Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp),
+            Modifier
+                .fillMaxWidth()
+                .alpha(if (headerVisible) 1f else 0f)
+                .padding(start = 4.dp, end = 4.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = onBack, enabled = headerVisible) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back), tint = palette.text)
             }
             Text(
@@ -150,11 +156,11 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 style = MaterialTheme.typography.titleMedium,
             )
             if (state.chapters.isNotEmpty()) {
-                TextButton(onClick = { sheet = ReaderSheet.CHAPTERS }) {
+                TextButton(onClick = { sheet = ReaderSheet.CHAPTERS }, enabled = headerVisible) {
                     Text(stringResource(R.string.chapters), color = palette.accent)
                 }
             }
-            IconButton(onClick = { sheet = ReaderSheet.SETTINGS }) {
+            IconButton(onClick = { sheet = ReaderSheet.SETTINGS }, enabled = headerVisible) {
                 Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.settings), tint = palette.text)
             }
         }
@@ -170,21 +176,33 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 ReaderStatus.READY -> ReadingBody(
                     state = state,
                     textColor = palette.text,
-                    muted = palette.muted,
-                    pageTurns = pageTurns,
                     onTap = viewModel::onReadingTap,
+                    onCenterTap = { chromeVisible = !chromeVisible },
                     onTurn = { forward -> viewModel.turnPage(forward) },
                     onLayout = viewModel::bindLayout,
                 )
             }
         }
-        ReaderBottomBar(
-            state = state,
-            palette = palette,
-            onPrevious = { viewModel.turnPage(forward = false) },
-            onNext = { viewModel.turnPage(forward = true) },
-            onToggle = viewModel::togglePlayback,
-        )
+        Column(Modifier.fillMaxWidth().alpha(if (chromeVisible) 1f else 0f)) {
+            Text(
+                stringResource(
+                    R.string.page_position,
+                    (state.pageIndex + 1).coerceAtLeast(1),
+                    state.pages.size.coerceAtLeast(1),
+                ),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                color = palette.muted,
+                textAlign = TextAlign.Center,
+            )
+            ReaderBottomBar(
+                state = state,
+                palette = palette,
+                enabled = chromeVisible,
+                onPrevious = { viewModel.turnPage(forward = false) },
+                onNext = { viewModel.turnPage(forward = true) },
+                onToggle = viewModel::togglePlayback,
+            )
+        }
     }
 
     if (sheet != ReaderSheet.NONE) {
@@ -210,9 +228,8 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
 private fun ReadingBody(
     state: ReaderUiState,
     textColor: Color,
-    muted: Color,
-    pageTurns: PageTurnBridge,
     onTap: () -> Unit,
+    onCenterTap: () -> Unit,
     onTurn: (Boolean) -> Unit,
     onLayout: (Int, Int) -> Unit,
 ) {
@@ -250,10 +267,10 @@ private fun ReadingBody(
                 CircularProgressIndicator(Modifier.align(Alignment.Center), color = textColor)
             } else {
                 val page = state.pages.getOrNull(state.pageIndex)
-                SimulatedPage(
+                ReadingSurface(
                     direction = state.settings.pageTurnDirection,
-                    bridge = pageTurns,
                     onTap = onTap,
+                    onCenterTap = onCenterTap,
                     onTurn = onTurn,
                 ) {
                     if (page == null || page.sentences.isEmpty()) {
@@ -316,23 +333,6 @@ private fun ReadingBody(
                 }
             }
         }
-        Text(
-            stringResource(
-                R.string.page_position,
-                (state.pageIndex + 1).coerceAtLeast(1),
-                state.pages.size.coerceAtLeast(1),
-            ),
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            color = muted,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            stringResource(R.string.tap_hint),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-            color = muted,
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.labelMedium,
-        )
     }
 }
 
@@ -357,6 +357,7 @@ private fun visiblePageText(
 private fun ReaderBottomBar(
     state: ReaderUiState,
     palette: app.moye.ui.theme.ReaderPalette,
+    enabled: Boolean,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onToggle: () -> Unit,
@@ -366,10 +367,10 @@ private fun ReaderBottomBar(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onPrevious) {
+        TextButton(onClick = onPrevious, enabled = enabled) {
             Text(stringResource(R.string.previous), color = palette.accent)
         }
-        IconButton(onClick = onToggle) {
+        IconButton(onClick = onToggle, enabled = enabled) {
             Icon(
                 if (state.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 contentDescription = stringResource(if (state.playing) R.string.pause else R.string.play),
@@ -377,7 +378,7 @@ private fun ReaderBottomBar(
             )
         }
         Text(stringResource(R.string.speed_value, state.settings.playbackSpeed), color = palette.muted)
-        TextButton(onClick = onNext) {
+        TextButton(onClick = onNext, enabled = enabled) {
             Text(stringResource(R.string.next), color = palette.accent)
         }
     }

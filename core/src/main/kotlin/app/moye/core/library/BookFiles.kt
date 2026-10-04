@@ -18,6 +18,9 @@ class BookFiles(private val root: File) {
         dir.mkdirs()
         val safeExt = extension.lowercase().filter { it.isLetterOrDigit() }.ifEmpty { "img" }
         val target = File(dir, "cover.$safeExt")
+        dir.listFiles()?.forEach { child ->
+            if (child.name.startsWith("cover.") && child.name != target.name) child.delete()
+        }
         target.writeBytes(bytes)
         return "$id/cover.$safeExt"
     }

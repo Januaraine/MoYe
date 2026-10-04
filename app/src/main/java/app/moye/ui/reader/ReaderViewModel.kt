@@ -26,11 +26,8 @@ import app.moye.data.ContentLoad
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -45,11 +42,6 @@ enum class ReaderStatus {
     READY,
     ERROR,
 }
-
-data class PageTurnVisual(
-    val forward: Boolean,
-    val moved: Boolean,
-)
 
 data class ReaderUiState(
     val status: ReaderStatus = ReaderStatus.LOADING,
@@ -86,12 +78,10 @@ class ReaderViewModel(
     private var typeJob: Job? = null
     private var typeGeneration = 0
     private var layoutGeneration = 0
+    private var playbackGeneration = 0
 
     private val _state = MutableStateFlow(ReaderUiState(settings = settingsStore.load()))
     val state: StateFlow<ReaderUiState> = _state.asStateFlow()
-
-    private val _pageTurns = MutableSharedFlow<PageTurnVisual>(extraBufferCapacity = 8)
-    val pageTurns: SharedFlow<PageTurnVisual> = _pageTurns.asSharedFlow()
 
     init {
         viewModelScope.launch {
@@ -232,29 +222,26 @@ class ReaderViewModel(
         val snapshot = _state.value
         if (snapshot.status != ReaderStatus.READY) return
         val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: return
+        val playing = snapshot.playing
         when (val step = SentenceReveal.onTap(page, snapshot.toReveal(), snapshot.settings.typewriterEnabled)) {
-            is RevealStep.Updated -> {
-                applyReveal(step.reveal)
-                if (snapshot.playing) restartPlayback()
-            }
-            RevealStep.NextPage -> turnPage(forward = true)
+            is RevealStep.Updated -> applyReveal(step.reveal)
+            RevealStep.NextPage -> advancePage(forward = true)
         }
+        if (playing) restartPlayback()
     }
 
     fun turnPage(forward: Boolean): Boolean {
-        val snapshot = _state.value
-        if (snapshot.status != ReaderStatus.READY || snapshot.pages.isEmpty()) {
-            _pageTurns.tryEmit(PageTurnVisual(forward, false))
-            return false
-        }
-        val target = snapshot.pageIndex + if (forward) 1 else -1
-        if (target !in snapshot.pages.indices) {
-            _pageTurns.tryEmit(PageTurnVisual(forward, false))
-            return false
-        }
-        enterPage(target)
-        _pageTurns.tryEmit(PageTurnVisual(forward, true))
+        val moved = advancePage(forward)
         if (_state.value.playing) restartPlayback()
+        return moved
+    }
+
+    private fun advancePage(forward: Boolean): Boolean {
+        val snapshot = _state.value
+        if (snapshot.status != ReaderStatus.READY || snapshot.pages.isEmpty()) return false
+        val target = snapshot.pageIndex + if (forward) 1 else -1
+        if (target !in snapshot.pages.indices) return false
+        enterPage(target)
         return true
     }
 
@@ -326,19 +313,21 @@ class ReaderViewModel(
     }
 
     private fun pausePlayback() {
+        playbackGeneration++
         _state.update { it.copy(playing = false) }
         playJob?.cancel()
         playJob = null
     }
 
     private fun restartPlayback() {
+        val generation = ++playbackGeneration
         playJob?.cancel()
         if (!_state.value.playing) {
             playJob = null
             return
         }
         playJob = viewModelScope.launch {
-            while (isActive && _state.value.playing) {
+            while (isActive && generation == playbackGeneration && _state.value.playing) {
                 if (_state.value.typing) {
                     delay(30)
                     continue
@@ -346,24 +335,24 @@ class ReaderViewModel(
                 val snapshot = _state.value
                 val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: break
                 if (page.sentences.isEmpty()) {
-                    _state.update { it.copy(playing = false) }
+                    if (generation == playbackGeneration) _state.update { it.copy(playing = false) }
                     break
                 }
                 val sentence = page.sentences.getOrNull((snapshot.revealedCount - 1).coerceAtLeast(0))
                 val marker = Triple(snapshot.pageIndex, snapshot.revealedCount, snapshot.typedChars)
                 delay(PlaybackTiming.dwellMillis(sentence?.text.orEmpty(), snapshot.settings.playbackSpeed))
+                if (!isActive || generation != playbackGeneration || !_state.value.playing) break
                 val now = _state.value
-                if (!now.playing) break
                 if (now.typing) continue
                 if (Triple(now.pageIndex, now.revealedCount, now.typedChars) != marker) continue
                 val nowPage = now.pages.getOrNull(now.pageIndex) ?: break
                 when (val step = SentenceReveal.onTap(nowPage, now.toReveal(), now.settings.typewriterEnabled)) {
                     is RevealStep.Updated -> applyReveal(step.reveal)
                     RevealStep.NextPage -> {
-                        if (!turnPage(forward = true)) {
+                        if (!advancePage(forward = true) && generation == playbackGeneration) {
                             _state.update { it.copy(playing = false) }
+                            break
                         }
-                        return@launch
                     }
                 }
             }

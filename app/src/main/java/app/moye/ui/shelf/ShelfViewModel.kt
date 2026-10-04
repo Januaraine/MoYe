@@ -12,11 +12,13 @@ import app.moye.core.settings.FileSettingsStore
 import app.moye.data.BookRepository
 import app.moye.data.ImportOutcome
 import app.moye.data.ShelfSnapshot
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class ShelfNotice {
     REMOVED_KEPT,
@@ -36,6 +38,7 @@ data class ShelfUiState(
     val notice: ShelfNotice? = null,
     val showPrivacy: Boolean = false,
     val languageTag: String = "",
+    val coverRevision: Int = 0,
 )
 
 class ShelfViewModel(
@@ -56,6 +59,18 @@ class ShelfViewModel(
                 it.copy(loading = false, loadFailed = false, books = snapshot.books)
             }
             ShelfSnapshot.Failed -> _state.update { it.copy(loading = false, loadFailed = true) }
+        }
+        viewModelScope.launch {
+            val changed = withContext(Dispatchers.IO) {
+                runCatching { repository.syncCovers() }.getOrDefault(false)
+            }
+            if (!changed) return@launch
+            when (val snapshot = repository.loadShelf()) {
+                is ShelfSnapshot.Ready -> _state.update {
+                    it.copy(loading = false, loadFailed = false, books = snapshot.books, coverRevision = it.coverRevision + 1)
+                }
+                ShelfSnapshot.Failed -> Unit
+            }
         }
     }
 

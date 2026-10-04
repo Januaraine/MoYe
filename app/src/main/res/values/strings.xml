@@ -83,5 +83,4 @@
     <string name="previous_chapter">上一章</string>
     <string name="next_chapter">下一章</string>
     <string name="no_chapters">这部作品没有可跳转的目录，仍可从头读到尾。</string>
-    <string name="tap_hint">点按补全当前句，或显示下一句；本页都出现后，再点按进入下一页</string>
 </resources>
