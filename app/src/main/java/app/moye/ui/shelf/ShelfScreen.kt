@@ -1,10 +1,15 @@
 package app.moye.ui.shelf
 
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -48,11 +55,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.moye.MoYeApplication
 import app.moye.ObserveResume
@@ -191,6 +207,7 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
                             items(visible, key = { it.id }) { book ->
                                 BookCard(
                                     book = book,
+                                    coverFile = container.repository.coverFile(book),
                                     onOpen = { onOpenBook(book.id) },
                                     onEdit = { viewModel.beginEdit(book) },
                                     onRemove = { viewModel.beginRemove(book) },
@@ -230,6 +247,7 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
 @Composable
 private fun BookCard(
     book: BookRecord,
+    coverFile: File?,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
@@ -241,7 +259,12 @@ private fun BookCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.clickable(onClick = onOpen).padding(16.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                BookCoverArt(
+                    title = book.title,
+                    file = coverFile,
+                    modifier = Modifier.size(width = 72.dp, height = 104.dp),
+                )
                 Column(Modifier.weight(1f)) {
                     Text(
                         book.title,
@@ -363,6 +386,72 @@ private fun RemoveBookDialog(
             TextButton(onClick = { onChoice(RemovalChoice.CANCEL) }) { Text(stringResource(R.string.cancel)) }
         },
     )
+}
+
+@Composable
+private fun BookCoverArt(title: String, file: File?, modifier: Modifier = Modifier) {
+    var bitmap by remember(file?.path) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var failed by remember(file?.path) { mutableStateOf(false) }
+    LaunchedEffect(file?.path) {
+        bitmap = null
+        failed = false
+        if (file == null) return@LaunchedEffect
+        val decoded = withContext(Dispatchers.IO) { decodeCover(file) }
+        if (decoded == null) failed = true else bitmap = decoded
+    }
+    val shape = RoundedCornerShape(4.dp)
+    val framed = modifier.clip(shape).border(1.dp, Color(0xFFC9C0B2), shape)
+    val image = bitmap
+    when {
+        image != null -> Image(
+            bitmap = image.asImageBitmap(),
+            contentDescription = stringResource(R.string.cover),
+            modifier = framed,
+            contentScale = ContentScale.Crop,
+        )
+        file != null && !failed -> Box(framed.background(Color(0xFF241C16)))
+        else -> GeneratedTitleCover(title, framed)
+    }
+}
+
+@Composable
+private fun GeneratedTitleCover(title: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier.background(Color(0xFF241C16)).padding(horizontal = 8.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier
+                    .width(28.dp)
+                    .height(2.dp)
+                    .background(Color(0xFF8C3A3A)),
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                title.ifBlank { stringResource(R.string.app_name) },
+                color = Color(0xFFF4EFE4),
+                fontFamily = FontFamily.Serif,
+                textAlign = TextAlign.Center,
+                maxLines = 5,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleSmall,
+            )
+        }
+    }
+}
+
+private fun decodeCover(file: File): android.graphics.Bitmap? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / sample > 800 || bounds.outHeight / sample > 1200) sample *= 2
+        BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+    } catch (_: Exception) {
+        null
+    }
 }
 
 @Composable

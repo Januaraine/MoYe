@@ -13,6 +13,15 @@ class BookFiles(private val root: File) {
         return "$id/book.$safeExt"
     }
 
+    fun placeCover(id: String, extension: String, bytes: ByteArray): String {
+        val dir = File(root, id)
+        dir.mkdirs()
+        val safeExt = extension.lowercase().filter { it.isLetterOrDigit() }.ifEmpty { "img" }
+        val target = File(dir, "cover.$safeExt")
+        target.writeBytes(bytes)
+        return "$id/cover.$safeExt"
+    }
+
     fun resolve(relativePath: String): File {
         val rootCanon = root.canonicalFile
         val fileCanon = File(rootCanon, relativePath).canonicalFile

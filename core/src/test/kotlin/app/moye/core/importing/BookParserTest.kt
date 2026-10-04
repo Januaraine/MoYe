@@ -11,6 +11,7 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class BookParserTest {
@@ -24,6 +25,7 @@ class BookParserTest {
         assertEquals("story", ok.book.title)
         assertEquals("第一章 山门", ok.book.chapters.single().title)
         assertEquals(null, ok.book.declaredWritingMode)
+        assertNull(ok.book.cover)
         assertTrue(ok.book.text.contains("风很大。"))
 
         val gbk = File(dir, "gbk.txt")
@@ -55,6 +57,7 @@ class BookParserTest {
         assertEquals("Paper Boat", horizontalBook.title)
         assertEquals("Lin", horizontalBook.author)
         assertEquals(WritingMode.HORIZONTAL, horizontalBook.declaredWritingMode)
+        assertNull(horizontalBook.cover)
         assertEquals(listOf("启程", "归来"), horizontalBook.chapters.map { it.title })
         assertTrue(horizontalBook.text.contains("山风很急。"))
         assertTrue(horizontalBook.text.contains("灯还亮着。"))
@@ -67,7 +70,29 @@ class BookParserTest {
         assertEquals(WritingMode.VERTICAL, verticalBook.declaredWritingMode)
     }
 
-    private fun writeEpub(file: File, vertical: Boolean) {
+    @Test
+    fun extractsMarkedEpubCoverAndIgnoresOtherImages() {
+        val dir = Files.createTempDirectory("moye-cover").toFile()
+        val file = File(dir, "covered.epub")
+        val coverBytes = byteArrayOf(0x1, 0x2, 0x3, 0x4)
+        writeEpub(file, vertical = false, cover = coverBytes, decoy = byteArrayOf(0x9, 0x9))
+        val book = assertIs<ParseResult.Ok>(BookParser.parse(BookFormat.EPUB, file, "covered.epub")).book
+        assertTrue(book.cover?.bytes?.contentEquals(coverBytes) == true)
+        assertEquals("jpg", book.cover?.extension)
+
+        val metaOnly = File(dir, "meta.epub")
+        writeEpub(metaOnly, vertical = false, cover = coverBytes, useCoverProperty = false)
+        val metaBook = assertIs<ParseResult.Ok>(BookParser.parse(BookFormat.EPUB, metaOnly, "meta.epub")).book
+        assertTrue(metaBook.cover?.bytes?.contentEquals(coverBytes) == true)
+    }
+
+    private fun writeEpub(
+        file: File,
+        vertical: Boolean,
+        cover: ByteArray? = null,
+        decoy: ByteArray? = null,
+        useCoverProperty: Boolean = true,
+    ) {
         val css = if (vertical) "body { writing-mode: vertical-rl; }" else "body { writing-mode: horizontal-tb; }"
         val chapter1 = """
             <html><head><title>启程</title></head><body>
@@ -83,17 +108,28 @@ class BookParserTest {
             <li><a href="c2.xhtml">归来</a></li>
             </ol></nav></body></html>
         """.trimIndent()
+        val coverMeta = if (cover == null) "" else """<meta name="cover" content="cover-img"/>"""
+        val coverItem = if (cover == null) {
+            ""
+        } else {
+            val properties = if (useCoverProperty) " properties=\"cover-image\"" else ""
+            """<item id="cover-img" href="cover.jpg" media-type="image/jpeg"$properties/>"""
+        }
+        val decoyItem = if (decoy == null) "" else """<item id="art" href="art.png" media-type="image/png"/>"""
         val opf = """
             <package xmlns="http://www.idpf.org/2007/opf">
               <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
                 <dc:title>Paper Boat</dc:title>
                 <dc:creator>Lin</dc:creator>
+                $coverMeta
               </metadata>
               <manifest>
                 <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
                 <item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/>
                 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
                 <item id="css" href="style.css" media-type="text/css"/>
+                $coverItem
+                $decoyItem
               </manifest>
               <spine>
                 <itemref idref="c1"/>
@@ -113,12 +149,18 @@ class BookParserTest {
             zip.put("OEBPS/c1.xhtml", chapter1)
             zip.put("OEBPS/c2.xhtml", chapter2)
             zip.put("OEBPS/nav.xhtml", nav)
+            if (cover != null) zip.putBytes("OEBPS/cover.jpg", cover)
+            if (decoy != null) zip.putBytes("OEBPS/art.png", decoy)
         }
     }
 
     private fun ZipOutputStream.put(path: String, text: String) {
+        putBytes(path, text.toByteArray())
+    }
+
+    private fun ZipOutputStream.putBytes(path: String, bytes: ByteArray) {
         putNextEntry(ZipEntry(path))
-        write(text.toByteArray())
+        write(bytes)
         closeEntry()
     }
 }

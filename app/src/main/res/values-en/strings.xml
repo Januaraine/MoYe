@@ -50,17 +50,12 @@
     <string name="chapters">Contents</string>
     <string name="previous">Previous page</string>
     <string name="next">Next page</string>
-    <string name="previous_sentence">Previous sentence</string>
-    <string name="next_sentence">Next sentence</string>
     <string name="play">Play</string>
     <string name="pause">Pause</string>
-    <string name="sentence_position">%1$d / %2$d</string>
     <string name="page_position">%1$d / %2$d</string>
     <string name="empty_content">There is no text to show.</string>
     <string name="content_missing">The local file for this book is missing.</string>
     <string name="content_corrupt">This book could not be opened. The file may be damaged.</string>
-    <string name="mode_sentence">Sentence</string>
-    <string name="mode_paged">Pages</string>
     <string name="font_size">Font size</string>
     <string name="letter_spacing">Letter spacing</string>
     <string name="line_spacing">Line spacing</string>
@@ -68,7 +63,15 @@
     <string name="theme_paper">Paper</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
-    <string name="playback_speed">Playback speed</string>
+    <string name="playback_speed">Auto-advance speed</string>
+    <string name="playback_speed_hint">While auto-advance is on, this is the pause after a sentence is fully shown. It is not the typewriter speed.</string>
+    <string name="typewriter_speed">Text animation speed</string>
+    <string name="typewriter_slow">Slow</string>
+    <string name="typewriter_normal">Normal</string>
+    <string name="typewriter_fast">Fast</string>
+    <string name="typewriter_disable">Disable typewriter effect</string>
+    <string name="typewriter_hint">Turning this off still reveals one sentence at a time. A tap shows the whole sentence immediately. It does not show every sentence on the page at once.</string>
+    <string name="cover">Cover</string>
     <string name="speed_value">%1$.1f×</string>
     <string name="page_direction">Page turn</string>
     <string name="direction_horizontal">Horizontal</string>
@@ -80,5 +83,5 @@
     <string name="previous_chapter">Previous chapter</string>
     <string name="next_chapter">Next chapter</string>
     <string name="no_chapters">This book has no chapter list. You can still read it from start to finish.</string>
-    <string name="tap_hint">Tap the right side to advance, the left side to go back</string>
+    <string name="tap_hint">Tap to finish the current sentence, or to show the next one. After the page is complete, tap again for the next page.</string>
 </resources>

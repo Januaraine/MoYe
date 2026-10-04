@@ -83,6 +83,7 @@ class BookRepository(
                             charOffset = 0,
                             totalChars = parsed.book.text.length.toLong(),
                             importedAtEpochMs = System.currentTimeMillis(),
+                            coverRelativePath = storeCover(id, parsed.book),
                         ),
                     )
                     ImportOutcome.Imported(id)
@@ -114,12 +115,21 @@ class BookRepository(
             is ParseResult.Ok -> {
                 library.updateProgress(id, record.charOffset, parsed.book.text.length.toLong())
                 val refreshed = library.get(id) ?: record
-                ContentLoad.Ready(refreshed, parsed.book)
+                ContentLoad.Ready(ensureCover(refreshed, parsed.book), parsed.book)
             }
         }
     }
 
     fun find(id: String): BookRecord? = library.get(id)
+
+    fun coverFile(record: BookRecord): File? {
+        val relative = record.coverRelativePath ?: return null
+        return try {
+            bookFiles.resolve(relative).takeIf { it.isFile }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun updateMetadata(id: String, title: String, author: String?) = library.updateMetadata(id, title, author)
 
@@ -132,6 +142,22 @@ class BookRepository(
     }
 
     fun remove(id: String, choice: RemovalChoice): RemovalResult = removal.remove(id, choice)
+
+    private fun storeCover(id: String, book: ParsedBook): String? {
+        val cover = book.cover ?: return null
+        return try {
+            bookFiles.placeCover(id, cover.extension, cover.bytes)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun ensureCover(record: BookRecord, book: ParsedBook): BookRecord {
+        val existing = coverFile(record)
+        if (existing != null) return record
+        val path = storeCover(record.id, book) ?: return record
+        return library.updateCover(record.id, path) ?: record.copy(coverRelativePath = path)
+    }
 
     private fun displayName(uri: Uri): String? {
         val cursor = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)

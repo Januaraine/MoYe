@@ -1,6 +1,7 @@
 package app.moye.core.importing
 
 import app.moye.core.model.Chapter
+import app.moye.core.model.EmbeddedCover
 import app.moye.core.model.ImportError
 import app.moye.core.model.ParsedBook
 import app.moye.core.model.WritingMode
@@ -20,6 +21,8 @@ sealed class ParseResult {
 }
 
 object EpubParser {
+    private const val MAX_COVER_BYTES = 8 * 1024 * 1024
+
     fun parse(file: File): ParseResult {
         if (!file.isFile) return ParseResult.Err(ImportError.UNREADABLE)
         val zip = try {
@@ -98,8 +101,36 @@ object EpubParser {
                 text = text,
                 chapters = chapters,
                 declaredWritingMode = if (isVertical(styleBlobs)) WritingMode.VERTICAL else WritingMode.HORIZONTAL,
+                cover = extractCover(zip, opf, opfDir, manifest),
             ),
         )
+    }
+
+    private fun extractCover(
+        zip: ZipFile,
+        opf: Element,
+        opfDir: String,
+        manifest: List<ManifestItem>,
+    ): EmbeddedCover? {
+        val byProperty = manifest.firstOrNull { item ->
+            isImage(item.mediaType) &&
+                item.properties.split(Regex("\\s+")).any { it.equals("cover-image", ignoreCase = true) }
+        }
+        val coverId = opf.descendants("meta").firstOrNull { meta ->
+            meta.getAttribute("name").equals("cover", ignoreCase = true)
+        }?.getAttribute("content")?.takeIf { it.isNotBlank() }
+        val byMeta = coverId?.let { id -> manifest.firstOrNull { it.id == id && isImage(it.mediaType) } }
+        val chosen = byProperty ?: byMeta ?: return null
+        val bytes = readEntry(zip, resolvePath(opfDir, chosen.href)) ?: return null
+        if (bytes.isEmpty() || bytes.size > MAX_COVER_BYTES) return null
+        return EmbeddedCover(chosen.mediaType, bytes)
+    }
+
+    private fun isImage(mediaType: String): Boolean {
+        return when (mediaType.lowercase().substringBefore(';').trim()) {
+            "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp" -> true
+            else -> false
+        }
     }
 
     private fun chapters(

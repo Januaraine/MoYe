@@ -2,6 +2,7 @@ package app.moye.ui.reader
 
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.text.LineBreaker
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -9,8 +10,10 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -27,6 +30,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import app.moye.core.model.PageTurnDirection
 import app.moye.core.model.VerticalPage
 import app.moye.core.text.Paginator
@@ -66,7 +70,7 @@ suspend fun buildHorizontalPagination(
     val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, safeWidth)
         .setLineSpacing(0f, lineHeight)
         .setIncludePad(false)
-        .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
+        .setBreakStrategy(LineBreaker.BREAK_STRATEGY_HIGH_QUALITY)
         .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
         .build()
     val pages = mutableListOf<LinePage>()
@@ -129,10 +133,10 @@ fun paginateVerticalFor(
 }
 
 class PageTurnBridge {
-    var onTurn: ((Boolean) -> Unit)? = null
+    var onPlay: ((forward: Boolean, moved: Boolean) -> Unit)? = null
 
-    fun request(forward: Boolean) {
-        onTurn?.invoke(forward)
+    fun play(forward: Boolean, moved: Boolean) {
+        onPlay?.invoke(forward, moved)
     }
 }
 
@@ -140,16 +144,17 @@ class PageTurnBridge {
 fun SimulatedPage(
     direction: PageTurnDirection,
     bridge: PageTurnBridge,
-    onTurn: (Boolean) -> Boolean,
+    onTap: () -> Unit,
+    onTurn: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
+    content: @Composable BoxScope.() -> Unit,
 ) {
     val offset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val latestTurn by rememberUpdatedState(onTurn)
+    val latestTap by rememberUpdatedState(onTap)
 
-    fun animateTurn(forward: Boolean) {
-        val moved = latestTurn(forward)
+    fun animateTurn(forward: Boolean, moved: Boolean) {
         scope.launch {
             val sign = if (forward) 1f else -1f
             if (!moved) {
@@ -163,36 +168,50 @@ fun SimulatedPage(
     }
 
     DisposableEffect(bridge) {
-        bridge.onTurn = { forward -> animateTurn(forward) }
-        onDispose { bridge.onTurn = null }
+        bridge.onPlay = { forward, moved -> animateTurn(forward, moved) }
+        onDispose { bridge.onPlay = null }
     }
 
     Box(
         modifier
             .fillMaxSize()
             .pointerInput(direction) {
-                var drag = 0f
-                detectDragGestures(
-                    onDragStart = { drag = 0f },
-                    onDragCancel = { scope.launch { offset.animateTo(0f) } },
-                    onDragEnd = {
-                        val limit = if (direction == PageTurnDirection.HORIZONTAL) size.width.toFloat() else size.height.toFloat()
-                        val threshold = limit * 0.18f
-                        when {
-                            drag <= -threshold -> animateTurn(true)
-                            drag >= threshold -> animateTurn(false)
-                            else -> scope.launch { offset.animateTo(0f) }
+                val slop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var drag = 0f
+                    var pastSlop = false
+                    val pointerId = down.id
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                        val delta = change.positionChange()
+                        drag += if (direction == PageTurnDirection.HORIZONTAL) delta.x else delta.y
+                        if (!pastSlop && abs(drag) > slop) pastSlop = true
+                        if (pastSlop) {
+                            change.consume()
+                            val limit = if (direction == PageTurnDirection.HORIZONTAL) size.width.toFloat() else size.height.toFloat()
+                            if (limit > 0f) {
+                                scope.launch { offset.snapTo((drag / limit).coerceIn(-1f, 1f)) }
+                            }
                         }
-                    },
-                    onDrag = { change, amount ->
-                        change.consume()
-                        drag += if (direction == PageTurnDirection.HORIZONTAL) amount.x else amount.y
-                        val limit = if (direction == PageTurnDirection.HORIZONTAL) size.width.toFloat() else size.height.toFloat()
-                        if (limit > 0f) {
-                            scope.launch { offset.snapTo((drag / limit).coerceIn(-1f, 1f)) }
+                        if (!change.pressed) {
+                            if (!pastSlop) {
+                                scope.launch { offset.snapTo(0f) }
+                                latestTap()
+                            } else {
+                                val limit = if (direction == PageTurnDirection.HORIZONTAL) size.width.toFloat() else size.height.toFloat()
+                                val threshold = limit * 0.18f
+                                when {
+                                    drag <= -threshold -> latestTurn(true)
+                                    drag >= threshold -> latestTurn(false)
+                                    else -> scope.launch { offset.animateTo(0f) }
+                                }
+                            }
+                            break
                         }
-                    },
-                )
+                    }
+                }
             }
             .graphicsLayer {
                 cameraDistance = 18f * density

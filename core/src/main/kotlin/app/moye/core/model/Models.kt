@@ -15,6 +15,12 @@ enum class ReadingMode {
     SENTENCE,
 }
 
+enum class TypewriterSpeed {
+    SLOW,
+    NORMAL,
+    FAST,
+}
+
 enum class PageTurnDirection {
     HORIZONTAL,
     VERTICAL,
@@ -51,7 +57,30 @@ data class ParsedBook(
     val text: String,
     val chapters: List<Chapter>,
     val declaredWritingMode: WritingMode?,
+    val cover: EmbeddedCover? = null,
 )
+
+class EmbeddedCover(
+    val mediaType: String,
+    val bytes: ByteArray,
+) {
+    val extension: String
+        get() = when (mediaType.lowercase().substringBefore(';').trim()) {
+            "image/png" -> "png"
+            "image/gif" -> "gif"
+            "image/webp" -> "webp"
+            "image/jpeg", "image/jpg" -> "jpg"
+            else -> "img"
+        }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is EmbeddedCover) return false
+        return mediaType == other.mediaType && bytes.contentEquals(other.bytes)
+    }
+
+    override fun hashCode(): Int = 31 * mediaType.hashCode() + bytes.contentHashCode()
+}
 
 data class ReadingUnit(
     val text: String,
