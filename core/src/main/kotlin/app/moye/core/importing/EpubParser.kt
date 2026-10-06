@@ -11,6 +11,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -22,6 +23,18 @@ sealed class ParseResult {
 
 object EpubParser {
     private const val MAX_COVER_BYTES = 8 * 1024 * 1024
+
+    fun readCover(file: File): EmbeddedCover? {
+        if (!file.isFile) return null
+        return try {
+            ZipFile(file).use { zip ->
+                val pack = readPackage(zip) ?: return null
+                extractCover(zip, pack.opf, pack.opfDir, pack.manifest)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun parse(file: File): ParseResult {
         if (!file.isFile) return ParseResult.Err(ImportError.UNREADABLE)
@@ -40,21 +53,12 @@ object EpubParser {
     }
 
     private fun parseArchive(zip: ZipFile): ParseResult {
-        val containerBytes = readEntry(zip, "META-INF/container.xml")
-            ?: return ParseResult.Err(ImportError.CORRUPT)
-        val container = parseXml(containerBytes) ?: return ParseResult.Err(ImportError.CORRUPT)
-        val opfPath = container.getElementsByTagName("*").let { nodes ->
-            (0 until nodes.length).firstNotNullOfOrNull { index ->
-                val node = nodes.item(index) as? Element
-                if (node?.localName == "rootfile") node.getAttribute("full-path") else null
-            }
-        }?.takeIf { it.isNotBlank() } ?: return ParseResult.Err(ImportError.CORRUPT)
-        val opfBytes = readEntry(zip, opfPath) ?: return ParseResult.Err(ImportError.CORRUPT)
-        val opf = parseXml(opfBytes) ?: return ParseResult.Err(ImportError.CORRUPT)
-        val opfDir = opfPath.substringBeforeLast('/', "")
+        val pack = readPackage(zip) ?: return ParseResult.Err(ImportError.CORRUPT)
+        val opf = pack.opf
+        val opfDir = pack.opfDir
+        val manifest = pack.manifest
         val title = firstText(opf, "title")
         val author = firstText(opf, "creator")
-        val manifest = manifestItems(opf)
         val spine = spineRefs(opf)
         if (spine.isEmpty()) return ParseResult.Err(ImportError.CORRUPT)
 
@@ -106,15 +110,29 @@ object EpubParser {
         )
     }
 
+    private fun readPackage(zip: ZipFile): EpubPackage? {
+        val containerBytes = readEntry(zip, "META-INF/container.xml") ?: return null
+        val container = parseXml(containerBytes) ?: return null
+        val opfPath = container.getElementsByTagName("*").let { nodes ->
+            (0 until nodes.length).firstNotNullOfOrNull { index ->
+                val node = nodes.item(index) as? Element
+                if (node?.localName == "rootfile") node.getAttribute("full-path") else null
+            }
+        }?.takeIf { it.isNotBlank() } ?: return null
+        val opfBytes = readEntry(zip, opfPath) ?: return null
+        val opf = parseXml(opfBytes) ?: return null
+        return EpubPackage(opf, opfPath.substringBeforeLast('/', ""), manifestItems(opf))
+    }
+
     private fun extractCover(
         zip: ZipFile,
         opf: Element,
         opfDir: String,
         manifest: List<ManifestItem>,
     ): EmbeddedCover? {
-        val byProperty = manifest.firstOrNull { item ->
-            isImage(item.mediaType) &&
-                item.properties.split(Regex("\\s+")).any { it.equals("cover-image", ignoreCase = true) }
+        val explicit = mutableListOf<EmbeddedCover>()
+        manifest.filter { isRaster(it) && hasProperty(it, "cover-image") }.forEach { item ->
+            loadRaster(zip, opfDir, item)?.let(explicit::add)
         }
         val coverId = opf.descendants("meta").firstOrNull { meta ->
             meta.getAttribute("name").equals("cover", ignoreCase = true)
@@ -160,6 +178,50 @@ object EpubParser {
             "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp" -> true
             else -> false
         }
+    }
+
+    private fun mediaTypeFor(path: String): String? {
+        return when (imageExtension(path)) {
+            "jpg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            else -> null
+        }
+    }
+
+    private fun imageExtension(path: String): String? {
+        return when (path.substringBefore('?').substringBefore('#').substringAfterLast('.').lowercase()) {
+            "jpg", "jpeg" -> "jpg"
+            "png" -> "png"
+            "gif" -> "gif"
+            "webp" -> "webp"
+            else -> null
+        }
+    }
+
+    private fun looksLikeCoverName(value: String): Boolean {
+        val stem = value.substringAfterLast('/').substringBeforeLast('.').lowercase()
+        return stem == "cover" || stem == "cover-image" || stem == "coverimage" ||
+            stem == "frontcover" || stem == "front-cover" || stem == "titlepage" ||
+            stem == "title-page" || stem == "coverpage" || stem == "bookcover" ||
+            stem.startsWith("cover-") || stem.startsWith("cover_")
+    }
+
+    private fun hasProperty(item: ManifestItem, token: String): Boolean {
+        return hasToken(item.properties, token)
+    }
+
+    private fun hasToken(value: String, token: String): Boolean {
+        return value.split(Regex("\\s+")).any { it.equals(token, ignoreCase = true) }
+    }
+
+    private fun hrefMatches(href: String, wanted: String): Boolean {
+        val left = href.substringBefore('#').substringBefore('?')
+        val right = wanted.substringBefore('#').substringBefore('?')
+        return left.equals(right, ignoreCase = true) ||
+            left.endsWith("/$right", ignoreCase = true) ||
+            right.endsWith("/$left", ignoreCase = true)
     }
 
     private fun chapters(
@@ -358,6 +420,12 @@ object EpubParser {
             null
         }
     }
+
+    private data class EpubPackage(
+        val opf: Element,
+        val opfDir: String,
+        val manifest: List<ManifestItem>,
+    )
 
     private data class ManifestItem(
         val id: String,

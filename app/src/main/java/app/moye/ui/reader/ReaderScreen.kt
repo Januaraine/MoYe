@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -333,9 +334,10 @@ private fun ReadingBody(
                 CircularProgressIndicator(Modifier.align(Alignment.Center), color = textColor)
             } else {
                 val page = state.pages.getOrNull(state.pageIndex)
-                SimulatedPage(
+                ReadingSurface(
                     direction = state.settings.pageTurnDirection,
                     onTap = onTap,
+                    onCenterTap = onCenterTap,
                     onTurn = onTurn,
                 ) {
                     if (page == null || page.sentences.isEmpty()) {
@@ -457,6 +459,7 @@ private fun visiblePageText(
 private fun ReaderBottomBar(
     state: ReaderUiState,
     palette: app.moye.ui.theme.ReaderPalette,
+    enabled: Boolean,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onToggle: () -> Unit,
@@ -466,10 +469,10 @@ private fun ReaderBottomBar(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onPrevious) {
+        TextButton(onClick = onPrevious, enabled = enabled) {
             Text(stringResource(R.string.previous), color = palette.accent)
         }
-        IconButton(onClick = onToggle) {
+        IconButton(onClick = onToggle, enabled = enabled) {
             Icon(
                 if (state.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 contentDescription = stringResource(if (state.playing) R.string.pause else R.string.play),
@@ -477,7 +480,7 @@ private fun ReaderBottomBar(
             )
         }
         Text(stringResource(R.string.speed_value, state.settings.playbackSpeed), color = palette.muted)
-        TextButton(onClick = onNext) {
+        TextButton(onClick = onNext, enabled = enabled) {
             Text(stringResource(R.string.next), color = palette.accent)
         }
     }

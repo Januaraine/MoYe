@@ -77,6 +77,7 @@ import app.moye.R
 import app.moye.applyAppLanguage
 import app.moye.core.library.BookRecord
 import app.moye.core.library.filterBooks
+import app.moye.core.model.BookFormat
 import app.moye.core.model.ImportError
 import app.moye.data.ImportReport
 import app.moye.core.model.RemovalChoice
@@ -229,7 +230,8 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
                             items(visible, key = { it.id }) { book ->
                                 BookCard(
                                     book = book,
-                                    coverFile = container.repository.coverFile(book),
+                                    coverFile = if (book.format == BookFormat.EPUB) container.repository.coverFile(book) else null,
+                                    coverRevision = state.coverRevision,
                                     onOpen = { onOpenBook(book.id) },
                                     onEdit = { viewModel.beginEdit(book) },
                                     onRemove = { viewModel.beginRemove(book) },
@@ -270,6 +272,7 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
 private fun BookCard(
     book: BookRecord,
     coverFile: File?,
+    coverRevision: Int,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
@@ -285,6 +288,7 @@ private fun BookCard(
                 BookCoverArt(
                     title = book.title,
                     file = coverFile,
+                    revision = coverRevision,
                     modifier = Modifier.size(width = 72.dp, height = 104.dp),
                 )
                 Column(Modifier.weight(1f)) {
@@ -411,10 +415,11 @@ private fun RemoveBookDialog(
 }
 
 @Composable
-private fun BookCoverArt(title: String, file: File?, modifier: Modifier = Modifier) {
-    var bitmap by remember(file?.path) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var failed by remember(file?.path) { mutableStateOf(false) }
-    LaunchedEffect(file?.path) {
+private fun BookCoverArt(title: String, file: File?, revision: Int, modifier: Modifier = Modifier) {
+    val stamp = file?.let { "${it.path}:${it.lastModified()}:$revision" }
+    var bitmap by remember(stamp) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var failed by remember(stamp) { mutableStateOf(false) }
+    LaunchedEffect(stamp) {
         bitmap = null
         failed = false
         if (file == null) return@LaunchedEffect
