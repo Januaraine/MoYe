@@ -2,7 +2,11 @@
 <resources>
     <string name="app_name">Moye</string>
     <string name="shelf_subtitle">On this device</string>
-    <string name="import_book">Import</string>
+    <string name="import_book">Import books</string>
+    <string name="import_added">Imported %1$d books</string>
+    <string name="import_already">Already added</string>
+    <string name="import_skipped">Skipped %1$d duplicate books</string>
+    <string name="import_failed_count">%1$d files were not imported</string>
     <string name="importing">Importing…</string>
     <string name="search_hint">Search title or author</string>
     <string name="clear_search">Clear search</string>
@@ -83,5 +87,5 @@
     <string name="previous_chapter">Previous chapter</string>
     <string name="next_chapter">Next chapter</string>
     <string name="no_chapters">This book has no chapter list. You can still read it from start to finish.</string>
-    <string name="tap_hint">Tap to finish the current sentence, or to show the next one. After the page is complete, tap again for the next page.</string>
+    <string name="tap_hint">Left: previous page. Right: continue reading. Center: menu. Swipe turns the page.</string>
 </resources>

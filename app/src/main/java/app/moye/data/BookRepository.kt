@@ -8,6 +8,8 @@ import app.moye.core.importing.ParseResult
 import app.moye.core.library.BookFiles
 import app.moye.core.library.BookRecord
 import app.moye.core.library.BookRemoval
+import app.moye.core.library.ContentDigest
+import app.moye.core.library.ImportIdentity
 import app.moye.core.library.Library
 import app.moye.core.library.copyWithLimit
 import app.moye.core.model.BookFormat
@@ -21,10 +23,19 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
-sealed class ImportOutcome {
-    data class Imported(val bookId: String) : ImportOutcome()
+data class ImportReport(
+    val imported: Int = 0,
+    val duplicates: Int = 0,
+    val failures: Int = 0,
+    val firstError: ImportError? = null,
+)
 
-    data class Failed(val error: ImportError) : ImportOutcome()
+private sealed class ImportOne {
+    data object Added : ImportOne()
+
+    data object Duplicate : ImportOne()
+
+    data class Failed(val error: ImportError) : ImportOne()
 }
 
 sealed class ShelfSnapshot {
@@ -54,19 +65,66 @@ class BookRepository(
         }
     }
 
-    suspend fun import(uri: Uri): ImportOutcome = withContext(Dispatchers.IO) {
+    suspend fun importAll(uris: List<Uri>): ImportReport = withContext(Dispatchers.IO) {
+        var imported = 0
+        var duplicates = 0
+        var failures = 0
+        var firstError: ImportError? = null
+        val known = knownContentHashes()
+        for (uri in uris) {
+            when (val outcome = importOne(uri, known)) {
+                ImportOne.Added -> imported++
+                ImportOne.Duplicate -> duplicates++
+                is ImportOne.Failed -> {
+                    failures++
+                    if (firstError == null) firstError = outcome.error
+                }
+            }
+        }
+        ImportReport(imported, duplicates, failures, firstError)
+    }
+
+    private fun knownContentHashes(): MutableSet<String> {
+        val known = mutableSetOf<String>()
+        for (book in library.list()) {
+            val hash = book.contentHash ?: hashStoredCopy(book)
+            if (!hash.isNullOrBlank()) known += hash
+        }
+        return known
+    }
+
+    private fun hashStoredCopy(book: BookRecord): String? {
+        val file = try {
+            bookFiles.resolve(book.relativePath)
+        } catch (_: Exception) {
+            return null
+        }
+        if (!file.isFile) return null
+        val hash = try {
+            ContentDigest.sha256(file)
+        } catch (_: Exception) {
+            return null
+        }
+        library.updateContentHash(book.id, hash)
+        return hash
+    }
+
+    private fun importOne(uri: Uri, known: MutableSet<String>): ImportOne {
         val name = displayName(uri)
         val mime = context.contentResolver.getType(uri)
-        val format = BookParser.detectFormat(name, mime)
-            ?: return@withContext ImportOutcome.Failed(ImportError.UNSUPPORTED_FORMAT)
+        val format = BookParser.detectFormat(name, mime) ?: return ImportOne.Failed(ImportError.UNSUPPORTED_FORMAT)
         val temp = File.createTempFile("moye-import", ".part", context.cacheDir)
+        var claimed = false
+        var hash = ""
         try {
-            val stream = context.contentResolver.openInputStream(uri)
-                ?: return@withContext ImportOutcome.Failed(ImportError.UNREADABLE)
+            val stream = context.contentResolver.openInputStream(uri) ?: return ImportOne.Failed(ImportError.UNREADABLE)
             val copied = stream.use { copyWithLimit(it, temp, BookParser.MAX_BYTES) }
-            if (!copied) return@withContext ImportOutcome.Failed(ImportError.TOO_LARGE)
-            when (val parsed = BookParser.parse(format, temp, name)) {
-                is ParseResult.Err -> ImportOutcome.Failed(parsed.error)
+            if (!copied) return ImportOne.Failed(ImportError.TOO_LARGE)
+            hash = ContentDigest.sha256(temp)
+            if (!ImportIdentity.claim(known, hash)) return ImportOne.Duplicate
+            claimed = true
+            return when (val parsed = BookParser.parse(format, temp, name)) {
+                is ParseResult.Err -> ImportOne.Failed(parsed.error)
                 is ParseResult.Ok -> {
                     val id = UUID.randomUUID().toString()
                     val extension = if (format == BookFormat.EPUB) "epub" else "txt"
@@ -84,14 +142,17 @@ class BookRepository(
                             totalChars = parsed.book.text.length.toLong(),
                             importedAtEpochMs = System.currentTimeMillis(),
                             coverRelativePath = storeCover(id, parsed.book),
+                            contentHash = hash,
                         ),
                     )
-                    ImportOutcome.Imported(id)
+                    claimed = false
+                    ImportOne.Added
                 }
             }
         } catch (_: Exception) {
-            ImportOutcome.Failed(ImportError.UNREADABLE)
+            return ImportOne.Failed(ImportError.UNREADABLE)
         } finally {
+            if (claimed) known.remove(hash)
             temp.delete()
         }
     }

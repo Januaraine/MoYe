@@ -1,6 +1,5 @@
 package app.moye.core.text
 
-import app.moye.core.model.TypewriterSpeed
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -48,10 +47,10 @@ class PageAndRevealTest {
         var reveal = SentenceReveal.enter(page, typewriterEnabled = true)
         assertEquals(1, reveal.revealedCount)
         assertTrue(reveal.typing)
-        assertEquals(0, reveal.typedChars)
+        assertEquals("这", SentenceReveal.visiblePrefix(page.sentences[0].text, reveal.typedChars))
 
         reveal = SentenceReveal.tick(page, reveal)
-        assertEquals("这", SentenceReveal.visiblePrefix(page.sentences[0].text, reveal.typedChars))
+        assertEquals("这是", SentenceReveal.visiblePrefix(page.sentences[0].text, reveal.typedChars))
 
         val completed = assertIs<RevealStep.Updated>(SentenceReveal.onTap(page, reveal, typewriterEnabled = true)).reveal
         assertEquals(1, completed.revealedCount)
@@ -61,7 +60,7 @@ class PageAndRevealTest {
         val next = assertIs<RevealStep.Updated>(SentenceReveal.onTap(page, completed, typewriterEnabled = true)).reveal
         assertEquals(2, next.revealedCount)
         assertTrue(next.typing)
-        assertEquals(0, next.typedChars)
+        assertEquals("窗", SentenceReveal.visiblePrefix(page.sentences[1].text, next.typedChars))
     }
 
     @Test
@@ -92,6 +91,23 @@ class PageAndRevealTest {
     }
 
     @Test
+    fun typewriterRevealsTheSampleSentenceOneCharacterAtATime() {
+        val page = pageOf(sample, linesPerPage = 8)
+        val sentence = page.sentences.first().text
+        assertTrue(page.sentences.size > 1)
+        var reveal = SentenceReveal.enter(page, typewriterEnabled = true)
+        val seen = mutableListOf(SentenceReveal.visiblePrefix(sentence, reveal.typedChars))
+        while (reveal.typing) {
+            reveal = SentenceReveal.tick(page, reveal)
+            seen += SentenceReveal.visiblePrefix(sentence, reveal.typedChars)
+        }
+        val expected = sentence.indices.map { index -> sentence.substring(0, index + 1) }
+        assertEquals(expected, seen)
+        assertEquals(1, reveal.revealedCount)
+        assertFalse(reveal.typing)
+    }
+
+    @Test
     fun typewriterAdvancesByCharacterAndKeepsSurrogatePairs() {
         val text = "A\uD83D\uDE00B"
         var count = 0
@@ -101,8 +117,13 @@ class PageAndRevealTest {
             seen += text.substring(0, count)
         }
         assertEquals(listOf("A", "A\uD83D\uDE00", "A\uD83D\uDE00B"), seen)
-        assertTrue(TypewriterTiming.millisPerCharacter(TypewriterSpeed.SLOW) > TypewriterTiming.millisPerCharacter(TypewriterSpeed.NORMAL))
-        assertTrue(TypewriterTiming.millisPerCharacter(TypewriterSpeed.NORMAL) > TypewriterTiming.millisPerCharacter(TypewriterSpeed.FAST))
+        val slow = TypewriterTiming.millisPerCharacter(0.5f)
+        val normal = TypewriterTiming.millisPerCharacter(1f)
+        val mid = TypewriterTiming.millisPerCharacter(1.2f)
+        val fast = TypewriterTiming.millisPerCharacter(3f)
+        assertTrue(slow > normal)
+        assertTrue(normal > mid)
+        assertTrue(mid > fast)
     }
 
     private fun pageOf(text: String, linesPerPage: Int) =

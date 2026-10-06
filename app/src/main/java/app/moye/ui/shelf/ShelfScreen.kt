@@ -1,9 +1,9 @@
 package app.moye.ui.shelf
 
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -65,6 +65,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -77,6 +78,7 @@ import app.moye.applyAppLanguage
 import app.moye.core.library.BookRecord
 import app.moye.core.library.filterBooks
 import app.moye.core.model.ImportError
+import app.moye.data.ImportReport
 import app.moye.core.model.RemovalChoice
 import app.moye.core.text.ReadingProgress
 import app.moye.core.time.DurationParts
@@ -92,12 +94,32 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
     val keptMessage = stringResource(R.string.removed_kept)
     val deletedMessage = stringResource(R.string.removed_deleted)
     val failedMessage = stringResource(R.string.remove_failed)
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) viewModel.import(uri)
+    val addedMessage = stringResource(R.string.import_added)
+    val alreadyMessage = stringResource(R.string.import_already)
+    val skippedMessage = stringResource(R.string.import_skipped)
+    val failedCountMessage = stringResource(R.string.import_failed_count)
+    val launcher = rememberLauncherForActivityResult(OpenMultipleBooks()) { uris: List<Uri> ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        for (uri in uris) {
+            try {
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+            } catch (_: SecurityException) {
+                // The picker grant is enough to copy the file during this import.
+            }
+        }
+        viewModel.importAll(uris)
     }
 
     LaunchedEffect(Unit) { viewModel.refresh() }
     ObserveResume(onResume = viewModel::refresh, onPause = {})
+
+    LaunchedEffect(state.importReport) {
+        val report = state.importReport ?: return@LaunchedEffect
+        val message = importReportMessage(report, addedMessage, alreadyMessage, skippedMessage, failedCountMessage)
+        if (message != null) snackbarHostState.showSnackbar(message)
+        viewModel.dismissImportReport()
+    }
 
     LaunchedEffect(state.notice) {
         val message = when (state.notice) {
@@ -164,7 +186,7 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
             )
             Spacer(Modifier.height(12.dp))
             Button(
-                onClick = { launcher.launch(arrayOf("*/*")) },
+                onClick = { launcher.launch(OpenMultipleBooks.MIME_TYPES) },
                 enabled = !state.importing,
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -428,14 +450,17 @@ private fun GeneratedTitleCover(title: String, modifier: Modifier = Modifier) {
                     .background(Color(0xFF8C3A3A)),
             )
             Spacer(Modifier.height(10.dp))
+            val label = title.ifBlank { stringResource(R.string.app_name) }
+            val compact = label.length > 8
             Text(
-                title.ifBlank { stringResource(R.string.app_name) },
+                label,
                 color = Color(0xFFF4EFE4),
                 fontFamily = FontFamily.Serif,
+                fontSize = if (compact) 13.sp else 20.sp,
+                lineHeight = if (compact) 17.sp else 24.sp,
                 textAlign = TextAlign.Center,
                 maxLines = 5,
                 overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleSmall,
             )
         }
     }
@@ -452,6 +477,24 @@ private fun decodeCover(file: File): android.graphics.Bitmap? {
     } catch (_: Exception) {
         null
     }
+}
+
+private fun importReportMessage(
+    report: ImportReport,
+    added: String,
+    already: String,
+    skipped: String,
+    failed: String,
+): String? {
+    if (report.imported == 0 && report.duplicates == 0 && report.failures == 0) return null
+    if (report.imported == 0 && report.failures == 0) {
+        return if (report.duplicates == 1) already else skipped.format(report.duplicates)
+    }
+    val parts = mutableListOf<String>()
+    if (report.imported > 0) parts += added.format(report.imported)
+    if (report.duplicates > 0) parts += skipped.format(report.duplicates)
+    if (report.failures > 0) parts += failed.format(report.failures)
+    return parts.joinToString(" ")
 }
 
 @Composable

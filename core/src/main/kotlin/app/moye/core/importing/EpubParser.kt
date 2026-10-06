@@ -120,10 +120,39 @@ object EpubParser {
             meta.getAttribute("name").equals("cover", ignoreCase = true)
         }?.getAttribute("content")?.takeIf { it.isNotBlank() }
         val byMeta = coverId?.let { id -> manifest.firstOrNull { it.id == id && isImage(it.mediaType) } }
-        val chosen = byProperty ?: byMeta ?: return null
+        val chosen = byProperty ?: byMeta ?: guideCoverItem(zip, opf, opfDir, manifest) ?: return null
         val bytes = readEntry(zip, resolvePath(opfDir, chosen.href)) ?: return null
         if (bytes.isEmpty() || bytes.size > MAX_COVER_BYTES) return null
         return EmbeddedCover(chosen.mediaType, bytes)
+    }
+
+    private fun guideCoverItem(
+        zip: ZipFile,
+        opf: Element,
+        opfDir: String,
+        manifest: List<ManifestItem>,
+    ): ManifestItem? {
+        val href = opf.descendants("reference").firstOrNull { reference ->
+            reference.getAttribute("type").equals("cover", ignoreCase = true)
+        }?.getAttribute("href")?.takeIf { it.isNotBlank() } ?: return null
+        val resolved = resolvePath(opfDir, href.substringBefore('#'))
+        manifest.firstOrNull { item ->
+            isImage(item.mediaType) && resolvePath(opfDir, item.href) == resolved
+        }?.let { return it }
+        val html = readEntry(zip, resolved)?.let(TxtDecoder::decode) ?: return null
+        val source = firstImageSource(html) ?: return null
+        val imagePath = resolvePath(resolved.substringBeforeLast('/', ""), source)
+        return manifest.firstOrNull { item ->
+            isImage(item.mediaType) && resolvePath(opfDir, item.href) == imagePath
+        }
+    }
+
+    private fun firstImageSource(html: String): String? {
+        val tag = Regex("""<img\b[^>]*>""", RegexOption.IGNORE_CASE).find(html)?.value ?: return null
+        return Regex("""\bsrc\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            .find(tag)
+            ?.groupValues
+            ?.get(1)
     }
 
     private fun isImage(mediaType: String): Boolean {

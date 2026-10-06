@@ -66,6 +66,21 @@ object SentenceReveal {
         return RevealStep.NextPage
     }
 
+    /**
+     * Auto Play moves to the next sentence when the sentence budget ends.
+     * A sentence that is still typing is shown in full as the next one appears;
+     * finishing the typewriter is not an extra step.
+     */
+    fun onAutoPlay(page: ReadingPage, reveal: PageReveal, typewriterEnabled: Boolean): RevealStep {
+        if (page.sentences.isEmpty()) return RevealStep.NextPage
+        if (reveal.revealedCount <= 0) return RevealStep.Updated(enter(page, typewriterEnabled))
+        if (reveal.revealedCount < page.sentences.size) {
+            val next = page.sentences[reveal.revealedCount]
+            return RevealStep.Updated(revealSentence(page, reveal.revealedCount + 1, typewriterEnabled, next))
+        }
+        return RevealStep.NextPage
+    }
+
     fun tick(page: ReadingPage, reveal: PageReveal): PageReveal {
         if (!reveal.typing || reveal.revealedCount <= 0) return reveal.copy(typing = false)
         val text = page.sentences.getOrNull(reveal.revealedCount - 1)?.text.orEmpty()
@@ -85,11 +100,12 @@ object SentenceReveal {
         typewriterEnabled: Boolean,
         sentence: app.moye.core.model.ReadingUnit,
     ): PageReveal {
-        val typing = typewriterEnabled && sentence.text.isNotEmpty()
+        val animate = typewriterEnabled && sentence.text.isNotEmpty()
+        val typed = if (animate) nextCharBoundary(sentence.text, 0) else sentence.text.length
         return PageReveal(
             revealedCount = revealedCount,
-            typedChars = if (typing) 0 else sentence.text.length,
-            typing = typing,
+            typedChars = typed,
+            typing = animate && typed < sentence.text.length,
             anchorOffset = sentence.startOffset,
         )
     }
