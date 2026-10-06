@@ -10,17 +10,6 @@ enum class WritingMode {
     VERTICAL,
 }
 
-enum class ReadingMode {
-    PAGED,
-    SENTENCE,
-}
-
-enum class TypewriterSpeed {
-    SLOW,
-    NORMAL,
-    FAST,
-}
-
 enum class PageTurnDirection {
     HORIZONTAL,
     VERTICAL,

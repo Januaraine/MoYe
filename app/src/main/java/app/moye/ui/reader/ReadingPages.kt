@@ -6,9 +6,6 @@ import android.graphics.text.LineBreaker
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -16,17 +13,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
@@ -35,7 +26,6 @@ import app.moye.core.model.PageTurnDirection
 import app.moye.core.model.VerticalPage
 import app.moye.core.text.Paginator
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
@@ -132,45 +122,16 @@ fun paginateVerticalFor(
     return Paginator.paginateVertical(text, chars, columns)
 }
 
-class PageTurnBridge {
-    var onPlay: ((forward: Boolean, moved: Boolean) -> Unit)? = null
-
-    fun play(forward: Boolean, moved: Boolean) {
-        onPlay?.invoke(forward, moved)
-    }
-}
-
 @Composable
 fun SimulatedPage(
     direction: PageTurnDirection,
-    bridge: PageTurnBridge,
-    onTap: () -> Unit,
+    onTap: (Float) -> Unit,
     onTurn: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val offset = remember { Animatable(0f) }
-    val scope = rememberCoroutineScope()
     val latestTurn by rememberUpdatedState(onTurn)
     val latestTap by rememberUpdatedState(onTap)
-
-    fun animateTurn(forward: Boolean, moved: Boolean) {
-        scope.launch {
-            val sign = if (forward) 1f else -1f
-            if (!moved) {
-                offset.animateTo(sign * 0.08f, tween(70))
-                offset.animateTo(0f, tween(90))
-                return@launch
-            }
-            offset.snapTo(-sign * 0.45f)
-            offset.animateTo(0f, tween(200, easing = FastOutSlowInEasing))
-        }
-    }
-
-    DisposableEffect(bridge) {
-        bridge.onPlay = { forward, moved -> animateTurn(forward, moved) }
-        onDispose { bridge.onPlay = null }
-    }
 
     Box(
         modifier
@@ -179,6 +140,7 @@ fun SimulatedPage(
                 val slop = viewConfiguration.touchSlop
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    val downX = down.position.x
                     var drag = 0f
                     var pastSlop = false
                     val pointerId = down.id
@@ -188,67 +150,26 @@ fun SimulatedPage(
                         val delta = change.positionChange()
                         drag += if (direction == PageTurnDirection.HORIZONTAL) delta.x else delta.y
                         if (!pastSlop && abs(drag) > slop) pastSlop = true
-                        if (pastSlop) {
-                            change.consume()
-                            val limit = if (direction == PageTurnDirection.HORIZONTAL) size.width.toFloat() else size.height.toFloat()
-                            if (limit > 0f) {
-                                scope.launch { offset.snapTo((drag / limit).coerceIn(-1f, 1f)) }
-                            }
-                        }
+                        if (pastSlop) change.consume()
                         if (!change.pressed) {
                             if (!pastSlop) {
-                                scope.launch { offset.snapTo(0f) }
-                                latestTap()
+                                val width = size.width.toFloat().coerceAtLeast(1f)
+                                latestTap(downX / width)
                             } else {
                                 val limit = if (direction == PageTurnDirection.HORIZONTAL) size.width.toFloat() else size.height.toFloat()
                                 val threshold = limit * 0.18f
                                 when {
                                     drag <= -threshold -> latestTurn(true)
                                     drag >= threshold -> latestTurn(false)
-                                    else -> scope.launch { offset.animateTo(0f) }
                                 }
                             }
                             break
                         }
                     }
                 }
-            }
-            .graphicsLayer {
-                cameraDistance = 18f * density
-                if (direction == PageTurnDirection.HORIZONTAL) {
-                    rotationY = -offset.value * 32f
-                    translationX = offset.value * size.width * 0.06f
-                } else {
-                    rotationX = offset.value * 28f
-                    translationY = offset.value * size.height * 0.06f
-                }
             },
     ) {
         content()
-        Canvas(Modifier.fillMaxSize()) {
-            val strength = abs(offset.value)
-            if (strength < 0.02f) return@Canvas
-            val shadow = Color.Black.copy(alpha = 0.28f * strength)
-            if (direction == PageTurnDirection.HORIZONTAL) {
-                val fromLeft = offset.value > 0f
-                drawRect(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(
-                            if (fromLeft) shadow else Color.Transparent,
-                            if (fromLeft) Color.Transparent else shadow,
-                        ),
-                    ),
-                )
-            } else {
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(shadow, Color.Transparent),
-                        startY = 0f,
-                        endY = size.height * 0.4f,
-                    ),
-                )
-            }
-        }
     }
 }
 

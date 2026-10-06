@@ -10,7 +10,7 @@ import app.moye.core.model.RemovalChoice
 import app.moye.core.model.RemovalResult
 import app.moye.core.settings.FileSettingsStore
 import app.moye.data.BookRepository
-import app.moye.data.ImportOutcome
+import app.moye.data.ImportReport
 import app.moye.data.ShelfSnapshot
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +31,7 @@ data class ShelfUiState(
     val query: String = "",
     val importing: Boolean = false,
     val importError: ImportError? = null,
+    val importReport: ImportReport? = null,
     val editing: BookRecord? = null,
     val removing: BookRecord? = null,
     val notice: ShelfNotice? = null,
@@ -63,19 +64,33 @@ class ShelfViewModel(
         _state.update { it.copy(query = query) }
     }
 
-    fun import(uri: Uri) {
+    fun importAll(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
-            _state.update { it.copy(importing = true, importError = null) }
-            when (val outcome = repository.import(uri)) {
-                is ImportOutcome.Imported -> refresh()
-                is ImportOutcome.Failed -> _state.update { it.copy(importError = outcome.error) }
+            _state.update { it.copy(importing = true, importError = null, importReport = null) }
+            val report = repository.importAll(uris)
+            refresh()
+            val onlyFailures = report.imported == 0 && report.duplicates == 0 && report.firstError != null
+            _state.update {
+                it.copy(
+                    importing = false,
+                    importError = if (onlyFailures) report.firstError else null,
+                    importReport = if (onlyFailures || report.imported + report.duplicates + report.failures == 0) {
+                        null
+                    } else {
+                        report
+                    },
+                )
             }
-            _state.update { it.copy(importing = false) }
         }
     }
 
     fun dismissImportError() {
         _state.update { it.copy(importError = null) }
+    }
+
+    fun dismissImportReport() {
+        _state.update { it.copy(importReport = null) }
     }
 
     fun beginEdit(book: BookRecord) {

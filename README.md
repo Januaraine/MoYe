@@ -13,13 +13,19 @@ Moye uses paginated reading.
 - Sentence is the reveal unit.
 - Sentences are revealed sequentially within a page.
 - Each newly revealed sentence supports character-by-character Typewriter Effect.
-- Typewriter speed is configurable.
+- Typewriter speed is continuously adjustable with a slider.
+- Typewriter Speed and Auto Play Speed are independent settings.
 - Typewriter Effect can be disabled.
 - Disabling the effect does NOT disable sequential sentence reveal.
+- Page transition animation is disabled.
 - EPUB embedded covers should be extracted and displayed.
 - Books without covers should receive generated text-based covers.
 
-进入新的一页时只显示第一句。点按正在打字的句子会立刻补全这一句；句子已经完整时，下一次点按才显示下一句；这一页都显示完后，下一次点按才进入下一页。上一页 / 下一页用来翻页。关闭逐字显示之后，点按仍然逐句出现，只是每一句会马上完整显示。
+Multiple files can be selected and imported at once. Duplicate books already in the bookshelf are skipped. Duplicate detection uses a content hash, not the title.
+
+进入新的一页时只显示第一句。页眉和页脚默认隐藏。点按屏幕中间打开或关掉菜单，并在打开时暂停自动播放；这个点按不会翻页，也不会出现下一句。点按左侧是上一页，点按右侧会补全正在打字的句子、出现下一句，或在本页都出现后进入下一页。滑动和菜单里的上一页 / 下一页直接切换页面，没有翻页动画。
+
+逐字速度和自动播放速度是两条分开的拖动条。自动播放按句子推进，每一句占用同一段时间；逐字动画在这段时间里播放，不会在播完后再额外等待。关闭逐字显示之后，点按右侧仍然逐句出现，只是每一句会马上完整显示，自动播放的句间间隔不变。手动点按会取消尚未结束的自动播放等待，再按当前句子重新计时。
 
 EPUB 里合法的内嵌封面会用在书架上。没有封面的书用书名生成文字封面，不会给已经有封面的 EPUB 再做一张文字封面。
 

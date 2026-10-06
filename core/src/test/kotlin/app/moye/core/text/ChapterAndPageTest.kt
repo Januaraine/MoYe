@@ -48,11 +48,12 @@ class ChapterAndPageTest {
     }
 
     @Test
-    fun longerSentencesAndHigherSpeedChangeDwellTime() {
-        val short = PlaybackTiming.dwellMillis("Hi.", 1f)
-        val longer = PlaybackTiming.dwellMillis("This sentence is much longer than the other one.", 1f)
-        val faster = PlaybackTiming.dwellMillis("This sentence is much longer than the other one.", 2f)
-        assertTrue(longer > short)
+    fun autoPlayIntervalFollowsSpeedAndIgnoresSentenceLength() {
+        val short = PlaybackTiming.sentenceAdvanceDelay(typewriterDurationMillis = 100, speed = 1f, typewriterEnabled = false)
+        val longer = PlaybackTiming.sentenceAdvanceDelay(typewriterDurationMillis = 5_000, speed = 1f, typewriterEnabled = true)
+        val faster = PlaybackTiming.intervalMillis(2f)
+        assertEquals(PlaybackTiming.NORMAL_INTERVAL_MILLIS, short)
+        assertEquals(short, longer)
         assertTrue(faster < longer)
     }
 }

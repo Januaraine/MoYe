@@ -8,8 +8,6 @@ import app.moye.core.model.effectiveWritingMode
 import app.moye.core.settings.FileSettingsStore
 import app.moye.core.settings.ReaderSettings
 import app.moye.core.model.PageTurnDirection
-import app.moye.core.model.ReadingMode
-import app.moye.core.model.TypewriterSpeed
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -106,23 +104,21 @@ class LibraryTest {
         store.save(
             ReaderSettings(
                 fontSizeSp = 99f,
-                readingMode = ReadingMode.PAGED,
                 pageTurnDirection = PageTurnDirection.VERTICAL,
                 txtWritingMode = WritingMode.VERTICAL,
                 playbackSpeed = 1.5f,
                 typewriterEnabled = false,
-                typewriterSpeed = TypewriterSpeed.FAST,
+                typewriterSpeed = 2.5f,
                 languageTag = "en",
             ),
         )
         val loaded = FileSettingsStore(file).load()
         assertEquals(36f, loaded.fontSizeSp)
-        assertEquals(ReadingMode.PAGED, loaded.readingMode)
         assertEquals(PageTurnDirection.VERTICAL, loaded.pageTurnDirection)
         assertEquals(WritingMode.VERTICAL, loaded.txtWritingMode)
         assertEquals(1.5f, loaded.playbackSpeed)
         assertFalse(loaded.typewriterEnabled)
-        assertEquals(TypewriterSpeed.FAST, loaded.typewriterSpeed)
+        assertEquals(2.5f, loaded.typewriterSpeed)
         assertEquals("en", loaded.languageTag)
         assertEquals(WritingMode.VERTICAL, effectiveWritingMode(null, loaded.txtWritingMode))
         assertEquals(WritingMode.HORIZONTAL, effectiveWritingMode(WritingMode.HORIZONTAL, WritingMode.VERTICAL))
@@ -131,11 +127,47 @@ class LibraryTest {
     @Test
     fun olderSettingsWithoutTypewriterFieldsStayReadable() {
         val file = File(Files.createTempDirectory("moye-old-settings").toFile(), "settings.json")
-        file.writeText("""{"fontSizeSp":18.0,"playbackSpeed":1.0,"languageTag":"zh"}""")
+        file.writeText(
+            """{"fontSizeSp":18.0,"readingMode":"SENTENCE","playbackSpeed":1.0,"languageTag":"zh"}""",
+        )
         val loaded = FileSettingsStore(file).load()
         assertTrue(loaded.typewriterEnabled)
-        assertEquals(TypewriterSpeed.NORMAL, loaded.typewriterSpeed)
+        assertEquals(1f, loaded.typewriterSpeed)
         assertEquals("zh", loaded.languageTag)
+    }
+
+    @Test
+    fun legacyTypewriterPresetsBecomeSliderSpeeds() {
+        val slowFile = File(Files.createTempDirectory("moye-slow").toFile(), "settings.json")
+        slowFile.writeText("""{"typewriterSpeed":"SLOW"}""")
+        assertEquals(0.5f, FileSettingsStore(slowFile).load().typewriterSpeed)
+        val fastFile = File(Files.createTempDirectory("moye-fast").toFile(), "settings.json")
+        fastFile.writeText("""{"typewriterSpeed":"FAST","playbackSpeed":9.0}""")
+        val fast = FileSettingsStore(fastFile).load()
+        assertEquals(2.5f, fast.typewriterSpeed)
+        assertEquals(3f, fast.playbackSpeed)
+    }
+
+    @Test
+    fun duplicateImportUsesContentHashNotTitle() {
+        val dir = Files.createTempDirectory("moye-hash").toFile()
+        val library = Library(FileLibraryStore(File(dir, "library.json")))
+        val first = File(dir, "one.txt").apply { writeText("same bytes") }
+        val renamed = File(dir, "other-title.txt").apply { writeText("same bytes") }
+        val different = File(dir, "different.txt").apply { writeText("different bytes") }
+        val hash = ContentDigest.sha256(first)
+        assertEquals(hash, ContentDigest.sha256(renamed))
+        assertTrue(hash != ContentDigest.sha256(different))
+        library.add(sample("a", "Same Title").copy(contentHash = hash))
+        assertEquals("a", library.findByContentHash(hash)?.id)
+        assertEquals("Same Title", library.findByContentHash(ContentDigest.sha256(renamed))?.title)
+        assertNull(library.findByContentHash(ContentDigest.sha256(different)))
+
+        val seen = mutableSetOf(hash)
+        assertFalse(ImportIdentity.claim(seen, hash))
+        assertTrue(ImportIdentity.claim(seen, ContentDigest.sha256(different)))
+        val reloaded = Library(FileLibraryStore(File(dir, "library.json")))
+        assertEquals(hash, reloaded.get("a")?.contentHash)
     }
 
     @Test

@@ -20,6 +20,7 @@ data class BookRecord(
     val readingDurationMs: Long = 0,
     val importedAtEpochMs: Long = 0,
     val coverRelativePath: String? = null,
+    val contentHash: String? = null,
 )
 
 @Serializable
@@ -76,6 +77,15 @@ class Library(private val store: FileLibraryStore) {
 
     fun updateCover(id: String, coverRelativePath: String): BookRecord? {
         return update(id) { current -> current.copy(coverRelativePath = coverRelativePath) }
+    }
+
+    fun updateContentHash(id: String, contentHash: String): BookRecord? {
+        return update(id) { current -> current.copy(contentHash = contentHash) }
+    }
+
+    fun findByContentHash(hash: String): BookRecord? {
+        if (hash.isBlank()) return null
+        return store.load().find { it.contentHash == hash }
     }
 
     fun updateProgress(id: String, charOffset: Long, totalChars: Long? = null): BookRecord? {

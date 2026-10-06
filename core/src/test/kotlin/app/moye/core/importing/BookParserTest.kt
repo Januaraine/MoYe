@@ -84,6 +84,12 @@ class BookParserTest {
         writeEpub(metaOnly, vertical = false, cover = coverBytes, useCoverProperty = false)
         val metaBook = assertIs<ParseResult.Ok>(BookParser.parse(BookFormat.EPUB, metaOnly, "meta.epub")).book
         assertTrue(metaBook.cover?.bytes?.contentEquals(coverBytes) == true)
+
+        val guideOnly = File(dir, "guide.epub")
+        writeEpub(guideOnly, vertical = false, cover = coverBytes, decoy = byteArrayOf(0x9, 0x9), guideOnly = true)
+        val guideBook = assertIs<ParseResult.Ok>(BookParser.parse(BookFormat.EPUB, guideOnly, "guide.epub")).book
+        assertTrue(guideBook.cover?.bytes?.contentEquals(coverBytes) == true)
+        assertEquals("jpg", guideBook.cover?.extension)
     }
 
     private fun writeEpub(
@@ -92,6 +98,7 @@ class BookParserTest {
         cover: ByteArray? = null,
         decoy: ByteArray? = null,
         useCoverProperty: Boolean = true,
+        guideOnly: Boolean = false,
     ) {
         val css = if (vertical) "body { writing-mode: vertical-rl; }" else "body { writing-mode: horizontal-tb; }"
         val chapter1 = """
@@ -108,12 +115,17 @@ class BookParserTest {
             <li><a href="c2.xhtml">归来</a></li>
             </ol></nav></body></html>
         """.trimIndent()
-        val coverMeta = if (cover == null) "" else """<meta name="cover" content="cover-img"/>"""
+        val coverMeta = if (cover == null || guideOnly) "" else """<meta name="cover" content="cover-img"/>"""
         val coverItem = if (cover == null) {
             ""
         } else {
-            val properties = if (useCoverProperty) " properties=\"cover-image\"" else ""
+            val properties = if (useCoverProperty && !guideOnly) " properties=\"cover-image\"" else ""
             """<item id="cover-img" href="cover.jpg" media-type="image/jpeg"$properties/>"""
+        }
+        val guide = if (guideOnly && cover != null) {
+            """<guide><reference type="cover" title="Cover" href="cover.xhtml"/></guide>"""
+        } else {
+            ""
         }
         val decoyItem = if (decoy == null) "" else """<item id="art" href="art.png" media-type="image/png"/>"""
         val opf = """
@@ -135,6 +147,7 @@ class BookParserTest {
                 <itemref idref="c1"/>
                 <itemref idref="c2"/>
               </spine>
+              $guide
             </package>
         """.trimIndent()
         ZipOutputStream(file.outputStream()).use { zip ->
@@ -149,6 +162,12 @@ class BookParserTest {
             zip.put("OEBPS/c1.xhtml", chapter1)
             zip.put("OEBPS/c2.xhtml", chapter2)
             zip.put("OEBPS/nav.xhtml", nav)
+            if (guideOnly && cover != null) {
+                zip.put(
+                    "OEBPS/cover.xhtml",
+                    """<html><body><img src="cover.jpg" alt="cover"/></body></html>""",
+                )
+            }
             if (cover != null) zip.putBytes("OEBPS/cover.jpg", cover)
             if (decoy != null) zip.putBytes("OEBPS/art.png", decoy)
         }
