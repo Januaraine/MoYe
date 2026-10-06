@@ -92,6 +92,104 @@ class BookParserTest {
         assertEquals("jpg", guideBook.cover?.extension)
     }
 
+    @Test
+    fun readsCoverWhenTheOpfPointsAtTheImageByHref() {
+        val dir = Files.createTempDirectory("moye-cover-href").toFile()
+        val file = File(dir, "href.epub")
+        val cover = byteArrayOf(0x11, 0x22, 0x33)
+        val decoy = byteArrayOf(0x44)
+        writeLooseEpub(
+            file,
+            """
+            <package xmlns="http://www.idpf.org/2007/opf">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>Href Cover</dc:title>
+                <meta name="cover" content="images/cover.jpg"/>
+              </metadata>
+              <manifest>
+                <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+                <item id="cimg" href="images/cover.jpg" media-type="image/jpeg"/>
+                <item id="art" href="art.png" media-type="image/png"/>
+              </manifest>
+              <spine><itemref idref="c1"/></spine>
+            </package>
+            """.trimIndent(),
+            mapOf(
+                "OEBPS/c1.xhtml" to "<html><body><p>正文。</p><img src=\"art.png\"/></body></html>".toByteArray(),
+                "OEBPS/images/cover.jpg" to cover,
+                "OEBPS/art.png" to decoy,
+            ),
+        )
+        val book = assertIs<ParseResult.Ok>(BookParser.parse(BookFormat.EPUB, file, "href.epub")).book
+        assertTrue(book.cover?.bytes?.contentEquals(cover) == true)
+    }
+
+    @Test
+    fun readsCoverImageFromTheCoverDocumentInsteadOfChapterArt() {
+        val dir = Files.createTempDirectory("moye-cover-doc").toFile()
+        val file = File(dir, "doc.epub")
+        val cover = byteArrayOf(0x21, 0x22, 0x23, 0x24, 0x25)
+        val decoy = byteArrayOf(0x7)
+        writeLooseEpub(
+            file,
+            """
+            <package xmlns="http://www.idpf.org/2007/opf">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>Doc Cover</dc:title>
+              </metadata>
+              <manifest>
+                <item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>
+                <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+                <item id="plate" href="images/plate.jpg" media-type="image/jpeg"/>
+                <item id="art" href="art.png" media-type="image/png"/>
+              </manifest>
+              <spine>
+                <itemref idref="cover-page"/>
+                <itemref idref="c1"/>
+              </spine>
+              <guide><reference type="cover" href="cover.xhtml"/></guide>
+            </package>
+            """.trimIndent(),
+            mapOf(
+                "OEBPS/cover.xhtml" to """<html><body><img src="images/plate.jpg" alt="cover"/></body></html>""".toByteArray(),
+                "OEBPS/c1.xhtml" to """<html><body><img src="art.png"/><p>正文到这里。</p></body></html>""".toByteArray(),
+                "OEBPS/images/plate.jpg" to cover,
+                "OEBPS/art.png" to decoy,
+            ),
+        )
+        val book = assertIs<ParseResult.Ok>(BookParser.parse(BookFormat.EPUB, file, "doc.epub")).book
+        assertTrue(book.cover?.bytes?.contentEquals(cover) == true)
+        assertEquals("jpg", book.cover?.extension)
+    }
+
+    @Test
+    fun readsUnmarkedCoverFileAndIgnoresOtherImages() {
+        val dir = Files.createTempDirectory("moye-cover-name").toFile()
+        val file = File(dir, "named.epub")
+        val cover = byteArrayOf(0x31, 0x32, 0x33, 0x34)
+        writeLooseEpub(
+            file,
+            """
+            <package xmlns="http://www.idpf.org/2007/opf">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Named</dc:title></metadata>
+              <manifest>
+                <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+                <item id="pic1" href="Images/Cover.jpeg" media-type="image/jpeg"/>
+                <item id="art" href="art.png" media-type="image/png"/>
+              </manifest>
+              <spine><itemref idref="c1"/></spine>
+            </package>
+            """.trimIndent(),
+            mapOf(
+                "OEBPS/c1.xhtml" to "<html><body><p>只有正文。</p></body></html>".toByteArray(),
+                "OEBPS/Images/Cover.jpeg" to cover,
+                "OEBPS/art.png" to byteArrayOf(0x8, 0x8),
+            ),
+        )
+        val book = assertIs<ParseResult.Ok>(BookParser.parse(BookFormat.EPUB, file, "named.epub")).book
+        assertTrue(book.cover?.bytes?.contentEquals(cover) == true)
+    }
+
     private fun writeEpub(
         file: File,
         vertical: Boolean,
@@ -170,6 +268,22 @@ class BookParserTest {
             }
             if (cover != null) zip.putBytes("OEBPS/cover.jpg", cover)
             if (decoy != null) zip.putBytes("OEBPS/art.png", decoy)
+        }
+    }
+
+    private fun writeLooseEpub(file: File, opf: String, entries: Map<String, ByteArray>) {
+        ZipOutputStream(file.outputStream()).use { zip ->
+            zip.put("mimetype", "application/epub+zip")
+            zip.put(
+                "META-INF/container.xml",
+                """
+                <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+                  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+                </container>
+                """.trimIndent(),
+            )
+            zip.put("OEBPS/content.opf", opf)
+            entries.forEach { (path, bytes) -> zip.putBytes(path, bytes) }
         }
     }
 

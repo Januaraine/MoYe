@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import app.moye.core.importing.BookParser
+import app.moye.core.importing.EpubParser
 import app.moye.core.importing.ParseResult
 import app.moye.core.library.BookFiles
 import app.moye.core.library.BookRecord
@@ -14,6 +15,7 @@ import app.moye.core.library.Library
 import app.moye.core.library.copyWithLimit
 import app.moye.core.model.BookFormat
 import app.moye.core.model.ContentError
+import app.moye.core.model.EmbeddedCover
 import app.moye.core.model.ImportError
 import app.moye.core.model.ParsedBook
 import app.moye.core.model.RemovalChoice
@@ -141,7 +143,7 @@ class BookRepository(
                             charOffset = 0,
                             totalChars = parsed.book.text.length.toLong(),
                             importedAtEpochMs = System.currentTimeMillis(),
-                            coverRelativePath = storeCover(id, parsed.book),
+                            coverRelativePath = parsed.book.cover?.let { storeCover(id, it) },
                             contentHash = hash,
                         ),
                     )
@@ -204,8 +206,29 @@ class BookRepository(
 
     fun remove(id: String, choice: RemovalChoice): RemovalResult = removal.remove(id, choice)
 
-    private fun storeCover(id: String, book: ParsedBook): String? {
-        val cover = book.cover ?: return null
+    fun syncCovers(): Boolean {
+        var changed = false
+        for (record in library.list()) {
+            if (record.format != BookFormat.EPUB) continue
+            val source = try {
+                bookFiles.resolve(record.relativePath)
+            } catch (_: Exception) {
+                continue
+            }
+            if (!source.isFile) continue
+            val cover = try {
+                EpubParser.readCover(source)
+            } catch (_: Exception) {
+                null
+            } ?: continue
+            if (sameCover(record, cover)) continue
+            val path = storeCover(record.id, cover) ?: continue
+            if (library.updateCover(record.id, path) != null) changed = true
+        }
+        return changed
+    }
+
+    private fun storeCover(id: String, cover: EmbeddedCover): String? {
         return try {
             bookFiles.placeCover(id, cover.extension, cover.bytes)
         } catch (_: Exception) {
@@ -214,10 +237,15 @@ class BookRepository(
     }
 
     private fun ensureCover(record: BookRecord, book: ParsedBook): BookRecord {
-        val existing = coverFile(record)
-        if (existing != null) return record
-        val path = storeCover(record.id, book) ?: return record
+        val cover = book.cover ?: return record
+        if (sameCover(record, cover)) return record
+        val path = storeCover(record.id, cover) ?: return record
         return library.updateCover(record.id, path) ?: record.copy(coverRelativePath = path)
+    }
+
+    private fun sameCover(record: BookRecord, cover: EmbeddedCover): Boolean {
+        val existing = coverFile(record) ?: return false
+        return existing.length() == cover.bytes.size.toLong() && existing.readBytes().contentEquals(cover.bytes)
     }
 
     private fun displayName(uri: Uri): String? {
