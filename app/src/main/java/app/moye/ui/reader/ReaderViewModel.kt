@@ -196,7 +196,7 @@ class ReaderViewModel(
             if (generation != layoutGeneration || _state.value.status != ReaderStatus.READY) return@launch
             val offset = _state.value.offset
             val index = SentenceReveal.pageIndexForOffset(pages, offset).coerceIn(0, pages.lastIndex)
-            val restored = SentenceReveal.restore(pages[index], offset)
+            val restored = SentenceReveal.restore(pages[index], offset, _state.value.settings.typewriterEnabled)
             val sentence = pages[index].sentences.getOrNull(restored.revealedCount - 1)
             val typeFirstSentence = opening &&
                 restored.revealedCount <= 1 &&
@@ -222,7 +222,7 @@ class ReaderViewModel(
             }
             restartTyping()
             persistOffset()
-            scheduleAutoPlay()
+            startPlaybackLoop()
         }
     }
 
@@ -242,14 +242,14 @@ class ReaderViewModel(
     fun toggleControls() {
         autoPlay = if (autoPlay.controlsOpen) autoPlay.hideControls() else autoPlay.showControls()
         publishAutoPlay()
-        scheduleAutoPlay()
+        startPlaybackLoop()
     }
 
     fun hideControls() {
         if (!autoPlay.controlsOpen) return
         autoPlay = autoPlay.hideControls()
         publishAutoPlay()
-        scheduleAutoPlay()
+        startPlaybackLoop()
     }
 
     fun turnPage(forward: Boolean): Boolean {
@@ -273,7 +273,7 @@ class ReaderViewModel(
             return
         }
         val index = SentenceReveal.pageIndexForOffset(pages, clamped)
-        val reveal = SentenceReveal.restore(pages[index], clamped)
+        val reveal = SentenceReveal.restore(pages[index], clamped, snapshot.settings.typewriterEnabled)
         _state.update {
             it.copy(
                 offset = reveal.anchorOffset,
@@ -306,13 +306,13 @@ class ReaderViewModel(
         val updated = settingsStore.update(transform)
         _state.update { current ->
             val page = current.pages.getOrNull(current.pageIndex)
-            val sentence = page?.sentences?.getOrNull(current.revealedCount - 1)
-            val finishTyping = !updated.typewriterEnabled && current.typing && sentence != null
+            val showWholePage = !updated.typewriterEnabled && page != null && page.sentences.isNotEmpty()
             current.copy(
                 settings = updated,
                 writingMode = if (current.writingModeLocked) current.writingMode else updated.txtWritingMode,
-                typedChars = if (finishTyping) sentence.text.length else current.typedChars,
-                typing = if (finishTyping) false else current.typing,
+                revealedCount = if (showWholePage) page.sentences.size else current.revealedCount,
+                typedChars = if (showWholePage) page.sentences.last().text.length else current.typedChars,
+                typing = if (showWholePage) false else current.typing,
             )
         }
         restartTyping()
@@ -323,25 +323,25 @@ class ReaderViewModel(
         if (_state.value.pages.isEmpty()) return
         autoPlay = autoPlay.start()
         publishAutoPlay()
-        scheduleAutoPlay()
+        startPlaybackLoop()
     }
 
     private fun pausePlayback() {
         autoPlay = autoPlay.pause()
         publishAutoPlay()
-        scheduleAutoPlay()
+        startPlaybackLoop()
     }
 
     private fun interruptAutoPlay() {
         autoPlay = autoPlay.interrupt()
-        scheduleAutoPlay()
+        startPlaybackLoop()
     }
 
     private fun publishAutoPlay() {
         _state.update { it.copy(playing = autoPlay.armed, controlsVisible = autoPlay.controlsOpen) }
     }
 
-    private fun scheduleAutoPlay() {
+    private fun startPlaybackLoop() {
         val gateTicket = autoPlay.token
         val previous = playJob
         playJob = null
@@ -350,49 +350,68 @@ class ReaderViewModel(
             previous?.cancel()
             return
         }
-        val snapshot = _state.value
-        val startedAt = now()
-        val scheduleTicket = autoPlaySchedule.replace(
-            nowMillis = startedAt,
-            speed = snapshot.settings.playbackSpeed,
-            typewriterDurationMillis = typewriterDurationMillis(snapshot),
-            typewriterEnabled = snapshot.settings.typewriterEnabled,
-        )
-        val wait = autoPlaySchedule.delayMillis(startedAt)
         val next = viewModelScope.launch {
-            delay(wait)
-            if (!isActive || !autoPlay.isCurrent(gateTicket) || !autoPlaySchedule.isCurrent(scheduleTicket)) return@launch
-            advanceAutoPlay()
+            while (isActive && autoPlay.isCurrent(gateTicket)) {
+                val snapshot = _state.value
+                val startedAt = now()
+                val scheduleTicket = autoPlaySchedule.replace(
+                    nowMillis = startedAt,
+                    speed = snapshot.settings.playbackSpeed,
+                    typewriterDurationMillis = remainingTypewriterMillis(snapshot),
+                    typewriterEnabled = snapshot.settings.typewriterEnabled,
+                )
+                val wait = autoPlaySchedule.delayMillis(startedAt)
+                if (wait > 0L) delay(wait)
+                if (!isActive || !autoPlay.isCurrent(gateTicket) || !autoPlaySchedule.isCurrent(scheduleTicket)) return@launch
+                while (isActive && autoPlay.isCurrent(gateTicket) && autoPlaySchedule.isCurrent(scheduleTicket) && _state.value.typing) {
+                    delay(16)
+                }
+                if (!isActive || !autoPlay.isCurrent(gateTicket) || !autoPlaySchedule.isCurrent(scheduleTicket)) return@launch
+                if (!advanceOneSentence()) return@launch
+            }
         }
         playJob = next
         if (previous != null && previous != next) previous.cancel()
     }
 
-    private fun advanceAutoPlay() {
-        if (!autoPlay.isCurrent(autoPlay.token)) return
+    private fun advanceOneSentence(): Boolean {
+        if (!autoPlay.isCurrent(autoPlay.token)) return false
         val snapshot = _state.value
         val page = snapshot.pages.getOrNull(snapshot.pageIndex)
         if (snapshot.status != ReaderStatus.READY || page == null) {
-            pausePlayback()
-            return
+            disarmPlayback()
+            return false
         }
         when (val step = SentenceReveal.onAutoPlay(page, snapshot.toReveal(), snapshot.settings.typewriterEnabled)) {
             is RevealStep.Updated -> {
+                val sameSentence = step.reveal.revealedCount == snapshot.revealedCount &&
+                    step.reveal.anchorOffset == snapshot.offset
+                if (sameSentence) return true
                 applyReveal(step.reveal)
-                scheduleAutoPlay()
+                return true
             }
             RevealStep.NextPage -> {
-                if (!movePage(forward = true)) pausePlayback() else scheduleAutoPlay()
+                if (!movePage(forward = true)) {
+                    disarmPlayback()
+                    return false
+                }
+                return true
             }
         }
     }
 
-    private fun typewriterDurationMillis(snapshot: ReaderUiState): Long {
-        if (!snapshot.settings.typewriterEnabled) return 0L
+    private fun disarmPlayback() {
+        autoPlay = autoPlay.pause()
+        publishAutoPlay()
+        autoPlaySchedule.clear()
+    }
+
+    private fun remainingTypewriterMillis(snapshot: ReaderUiState): Long {
+        if (!snapshot.settings.typewriterEnabled || !snapshot.typing) return 0L
         val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: return 0L
         val sentence = page.sentences.getOrNull((snapshot.revealedCount - 1).coerceAtLeast(0)) ?: return 0L
-        val perChar = TypewriterTiming.millisPerCharacter(snapshot.settings.typewriterSpeed)
-        return sentence.text.length.coerceAtLeast(0) * perChar
+        val unread = (sentence.text.length - snapshot.typedChars).coerceAtLeast(0)
+        return unread * TypewriterTiming.millisPerCharacter(snapshot.settings.typewriterSpeed)
     }
 
     private fun movePage(forward: Boolean): Boolean {

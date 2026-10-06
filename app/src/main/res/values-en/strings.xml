@@ -68,13 +68,13 @@
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="playback_speed">Auto-advance speed</string>
-    <string name="playback_speed_hint">While auto-advance is on, this is the pause after a sentence is fully shown. It is not the typewriter speed.</string>
+    <string name="playback_speed_hint">With the typewriter on, this is the pause after a sentence is fully shown. With it off, this is the pause before the next page. It is not the typewriter speed.</string>
     <string name="typewriter_speed">Text animation speed</string>
     <string name="typewriter_slow">Slow</string>
     <string name="typewriter_normal">Normal</string>
     <string name="typewriter_fast">Fast</string>
     <string name="typewriter_disable">Disable typewriter effect</string>
-    <string name="typewriter_hint">Turning this off still reveals one sentence at a time. A tap shows the whole sentence immediately. It does not show every sentence on the page at once.</string>
+    <string name="typewriter_hint">Turning this off shows the whole page at once. Reading then moves page by page.</string>
     <string name="cover">Cover</string>
     <string name="speed_value">%1$.1f×</string>
     <string name="page_direction">Page turn</string>

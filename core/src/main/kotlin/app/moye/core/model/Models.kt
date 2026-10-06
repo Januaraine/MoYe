@@ -75,6 +75,8 @@ data class ReadingUnit(
     val text: String,
     val startOffset: Int,
     val endOffset: Int,
+    val paragraphIndex: Int = 0,
+    val sentenceIndex: Int = 0,
 )
 
 data class TextSpan(

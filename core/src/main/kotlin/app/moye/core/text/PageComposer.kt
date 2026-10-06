@@ -29,20 +29,29 @@ object PageComposer {
         val groups = mutableListOf<List<ReadingUnit>>()
         var current = mutableListOf<ReadingUnit>()
         var used = 0
+        var column = 0
         fun flush() {
             if (current.isEmpty()) return
             groups += current.toList()
             current = mutableListOf()
             used = 0
+            column = 0
         }
         for (unit in units) {
             for (chunk in splitToBudget(unit, width, budget)) {
-                val lines = estimateLines(chunk.text, width).coerceAtLeast(1)
-                val cost = if (current.isEmpty()) lines else lines + 1
-                if (current.isNotEmpty() && used + cost > budget) flush()
-                val applied = if (current.isEmpty()) lines else lines + 1
-                current += chunk
-                used += applied
+                val continuing = current.isNotEmpty() && chunk.paragraphIndex == current.last().paragraphIndex
+                val (added, nextColumn) = additionalLines(chunk.text, width, if (continuing) column else 0)
+                if (current.isNotEmpty() && used + added > budget) {
+                    flush()
+                    val (freshAdded, freshColumn) = additionalLines(chunk.text, width, 0)
+                    current += chunk
+                    used = freshAdded
+                    column = freshColumn
+                } else {
+                    current += chunk
+                    used += added
+                    column = nextColumn
+                }
             }
         }
         flush()
@@ -60,24 +69,34 @@ object PageComposer {
     }
 
     internal fun estimateLines(text: String, charsPerLine: Int): Int {
+        return additionalLines(text, charsPerLine, 0).first
+    }
+
+    /**
+     * Lines added by placing [text] when [column] characters are already on the
+     * current line. A new paragraph passes column 0, so it starts on the next
+     * line and does not insert a blank line.
+     */
+    internal fun additionalLines(text: String, charsPerLine: Int, column: Int): Pair<Int, Int> {
         val width = charsPerLine.coerceAtLeast(1)
-        if (text.isEmpty()) return 1
+        var col = column.coerceIn(0, width)
+        if (col == width) col = 0
+        val freshLine = col == 0
         var lines = 0
-        var column = 0
         for (ch in text) {
             if (ch == '\n') {
                 lines++
-                column = 0
+                col = 0
                 continue
             }
-            if (column == width) {
+            if (col == width) {
                 lines++
-                column = 0
+                col = 0
             }
-            column++
+            col++
         }
-        if (column > 0) lines++
-        return lines.coerceAtLeast(1)
+        if (freshLine && (col > 0 || text.isEmpty())) lines++
+        return lines to col
     }
 
     private fun splitToBudget(unit: ReadingUnit, charsPerLine: Int, linesPerPage: Int): List<ReadingUnit> {
@@ -100,7 +119,11 @@ object PageComposer {
             }
             if (best < text.length && best > cursor && text[best - 1].isHighSurrogate()) best--
             if (best <= cursor) best = (cursor + 1).coerceAtMost(text.length)
-            parts += ReadingUnit(text.substring(cursor, best), unit.startOffset + cursor, unit.startOffset + best)
+            parts += unit.copy(
+                text = text.substring(cursor, best),
+                startOffset = unit.startOffset + cursor,
+                endOffset = unit.startOffset + best,
+            )
             cursor = best
         }
         return parts

@@ -68,13 +68,13 @@
     <string name="theme_light">白色</string>
     <string name="theme_dark">夜间</string>
     <string name="playback_speed">自动播放速度</string>
-    <string name="playback_speed_hint">自动播放时，当前句完整出现后，再等待多久显示下一句。这不是逐字速度。</string>
+    <string name="playback_speed_hint">开启逐字显示时，当前句完整出现后再显示下一句。关闭逐字显示时，等待这段时间后翻到下一页。这不是逐字速度。</string>
     <string name="typewriter_speed">文字显示速度</string>
     <string name="typewriter_slow">慢</string>
     <string name="typewriter_normal">标准</string>
     <string name="typewriter_fast">快</string>
     <string name="typewriter_disable">关闭逐字显示</string>
-    <string name="typewriter_hint">关闭后仍会逐句出现。点按会立刻显示完整的一句，而不是把整页一次铺开。</string>
+    <string name="typewriter_hint">关闭后，这一页的文字会一次全部显示，然后按页翻页。不会逐句出现，也不会逐段出现。</string>
     <string name="cover">封面</string>
     <string name="speed_value">%1$.1f×</string>
     <string name="page_direction">翻页方向</string>

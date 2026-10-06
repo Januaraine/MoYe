@@ -11,3 +11,5 @@ captures/
 *.ap_
 *.aab
 output-metadata.json
+hs_err_pid*.log
+replay_pid*.log

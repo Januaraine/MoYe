@@ -49,11 +49,12 @@ class ChapterAndPageTest {
 
     @Test
     fun autoPlayIntervalFollowsSpeedAndIgnoresSentenceLength() {
-        val short = PlaybackTiming.sentenceAdvanceDelay(typewriterDurationMillis = 100, speed = 1f, typewriterEnabled = false)
-        val longer = PlaybackTiming.sentenceAdvanceDelay(typewriterDurationMillis = 5_000, speed = 1f, typewriterEnabled = true)
+        val held = PlaybackTiming.sentenceAdvanceDelay(typewriterDurationMillis = 100, speed = 1f, typewriterEnabled = false)
+        val unfinished = PlaybackTiming.sentenceAdvanceDelay(typewriterDurationMillis = 5_000, speed = 1f, typewriterEnabled = true)
         val faster = PlaybackTiming.intervalMillis(2f)
-        assertEquals(PlaybackTiming.NORMAL_INTERVAL_MILLIS, short)
-        assertEquals(short, longer)
-        assertTrue(faster < longer)
+        assertEquals(PlaybackTiming.NORMAL_INTERVAL_MILLIS, held)
+        assertEquals(5_000L, unfinished)
+        assertTrue(unfinished < 5_000L + held)
+        assertTrue(faster < held)
     }
 }
