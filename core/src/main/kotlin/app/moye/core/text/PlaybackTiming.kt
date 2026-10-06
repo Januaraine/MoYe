@@ -3,8 +3,8 @@ package app.moye.core.text
 import kotlin.math.roundToLong
 
 /**
- * Auto Play speed is the time budget for one sentence.
- * It does not grow with sentence length, and the typewriter does not add another wait after it.
+ * One sentence has one display cycle.
+ * The next sentence waits until this cycle ends. A paragraph break is not part of the calculation.
  */
 object PlaybackTiming {
     const val MIN_SPEED = 0.5f
@@ -19,17 +19,18 @@ object PlaybackTiming {
     }
 
     /**
-     * Delay until the next sentence.
-     * [typewriterDurationMillis] and [typewriterEnabled] are accepted so callers pass the
-     * typewriter state explicitly; neither value is added to the delay.
+     * How long the current sentence stays before the next one may appear.
+     * Typewriter time is included so the next sentence cannot appear early.
+     * It is not added again after the sentence is already fully shown.
      */
     fun sentenceAdvanceDelay(
         typewriterDurationMillis: Long,
         speed: Float,
         typewriterEnabled: Boolean,
     ): Long {
-        val typewriterExtendsBudget = false
-        return intervalMillis(speed) + if (typewriterExtendsBudget && typewriterEnabled) typewriterDurationMillis else 0L
+        val interval = intervalMillis(speed)
+        if (!typewriterEnabled) return interval
+        return maxOf(interval, typewriterDurationMillis.coerceAtLeast(0L))
     }
 }
 

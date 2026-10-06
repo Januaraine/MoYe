@@ -18,11 +18,16 @@ object SentenceSegmenter {
         if (text.isEmpty()) return emptyList()
         val units = mutableListOf<ReadingUnit>()
         var index = 0
+        var paragraphIndex = 0
         while (index < text.length) {
             val newline = text.indexOf('\n', index)
             val lineEnd = if (newline == -1) text.length else newline
             if (lineEnd > index && !text.substring(index, lineEnd).isBlank()) {
-                units += splitParagraph(text, index, lineEnd)
+                val sentences = splitParagraph(text, index, lineEnd)
+                sentences.forEachIndexed { sentenceIndex, unit ->
+                    units += unit.copy(paragraphIndex = paragraphIndex, sentenceIndex = sentenceIndex)
+                }
+                paragraphIndex++
             }
             index = if (newline == -1) text.length else newline + 1
         }

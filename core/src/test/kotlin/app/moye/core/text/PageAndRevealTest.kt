@@ -20,6 +20,33 @@ class PageAndRevealTest {
     }
 
     @Test
+    fun paragraphsFollowEachOtherWithoutABlankLine() {
+        val together = PageComposer.compose(
+            SentenceSegmenter.segment("甲。乙。"),
+            charsPerLine = 10,
+            linesPerPage = 1,
+            textLength = "甲。乙。".length,
+        )
+        val broken = PageComposer.compose(
+            SentenceSegmenter.segment("甲。\n乙。"),
+            charsPerLine = 10,
+            linesPerPage = 1,
+            textLength = "甲。\n乙。".length,
+        )
+        val roomForBothLines = PageComposer.compose(
+            SentenceSegmenter.segment("甲。\n乙。"),
+            charsPerLine = 10,
+            linesPerPage = 2,
+            textLength = "甲。\n乙。".length,
+        )
+        assertEquals(1, together.size)
+        assertEquals(2, together.single().sentences.size)
+        assertEquals(2, broken.size)
+        assertEquals("乙。", broken.last().sentences.single().text)
+        assertEquals(1, roomForBothLines.size)
+    }
+
+    @Test
     fun sentencesAreNotPagesWhenMoreThanOneFits() {
         val units = SentenceSegmenter.segment(sample)
         val pages = PageComposer.compose(units, charsPerLine = 20, linesPerPage = 3, textLength = sample.length)
@@ -66,28 +93,27 @@ class PageAndRevealTest {
     @Test
     fun tapAfterTheLastSentenceAsksForTheNextPage() {
         val page = pageOf(sample, linesPerPage = 8)
-        var reveal = SentenceReveal.enter(page, typewriterEnabled = false)
-        while (reveal.revealedCount < page.sentences.size) {
-            reveal = assertIs<RevealStep.Updated>(SentenceReveal.onTap(page, reveal, typewriterEnabled = false)).reveal
-            assertFalse(reveal.typing)
+        var reveal = SentenceReveal.enter(page, typewriterEnabled = true)
+        while (reveal.revealedCount < page.sentences.size || reveal.typing) {
+            if (reveal.typing) {
+                reveal = SentenceReveal.tick(page, reveal)
+            } else {
+                reveal = assertIs<RevealStep.Updated>(SentenceReveal.onTap(page, reveal, typewriterEnabled = true)).reveal
+            }
         }
         assertEquals(page.sentences.size, reveal.revealedCount)
-        assertIs<RevealStep.NextPage>(SentenceReveal.onTap(page, reveal, typewriterEnabled = false))
+        assertIs<RevealStep.NextPage>(SentenceReveal.onTap(page, reveal, typewriterEnabled = true))
     }
 
     @Test
-    fun disablingTypewriterStillRevealsOneSentenceAtATime() {
+    fun disablingTypewriterShowsTheWholePageAtOnce() {
         val page = pageOf(sample, linesPerPage = 8)
-        val first = SentenceReveal.enter(page, typewriterEnabled = false)
-        assertEquals(1, first.revealedCount)
-        assertFalse(first.typing)
-        assertEquals(page.sentences[0].text.length, first.typedChars)
-
-        val second = assertIs<RevealStep.Updated>(SentenceReveal.onTap(page, first, typewriterEnabled = false)).reveal
-        assertEquals(2, second.revealedCount)
-        assertFalse(second.typing)
-        assertEquals(page.sentences[1].text.length, second.typedChars)
-        assertTrue(second.revealedCount < page.sentences.size)
+        val shown = SentenceReveal.enter(page, typewriterEnabled = false)
+        assertEquals(page.sentences.size, shown.revealedCount)
+        assertFalse(shown.typing)
+        assertEquals(page.sentences.last().text.length, shown.typedChars)
+        assertIs<RevealStep.NextPage>(SentenceReveal.onTap(page, shown, typewriterEnabled = false))
+        assertIs<RevealStep.NextPage>(SentenceReveal.onAutoPlay(page, shown, typewriterEnabled = false))
     }
 
     @Test

@@ -13,10 +13,12 @@ import androidx.activity.result.contract.ActivityResultContracts
  */
 class OpenMultipleBooks : ActivityResultContracts.OpenMultipleDocuments() {
     override fun createIntent(context: Context, input: Array<String>): Intent {
-        return Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+        val types = input.takeIf { requested ->
+            requested.size > 1 && requested.none { it == "*/*" }
+        } ?: MIME_TYPES
+        return super.createIntent(context, types).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            setType("*/*")
-            putExtra(Intent.EXTRA_MIME_TYPES, MIME_TYPES)
+            putExtra(Intent.EXTRA_MIME_TYPES, types)
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)

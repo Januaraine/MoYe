@@ -55,12 +55,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -296,8 +299,11 @@ private fun ReadingBody(
             val density = LocalDensity.current
             val fontPx = with(density) { state.settings.fontSizeSp.sp.toPx() }
             val paddingPx = with(density) { 8.dp.toPx() }
-            val textWidth = (with(density) { maxWidth.toPx() } - with(density) { 56.dp.toPx() }).coerceAtLeast(fontPx)
-            val textHeight = (with(density) { maxHeight.toPx() } - with(density) { 24.dp.toPx() }).coerceAtLeast(fontPx)
+            val topPad = 18.dp
+            val bottomPad = 28.dp
+            val sidePad = 28.dp
+            val textWidth = (with(density) { maxWidth.toPx() } - with(density) { sidePad.toPx() } * 2).coerceAtLeast(fontPx)
+            val textHeight = (with(density) { maxHeight.toPx() } - with(density) { topPad.toPx() + bottomPad.toPx() }).coerceAtLeast(fontPx)
             val layoutReady = maxWidth > 48.dp && maxHeight > 48.dp
             val charsPerLine: Int
             val linesPerPage: Int
@@ -315,9 +321,9 @@ private fun ReadingBody(
             } else {
                 val charWidth = fontPx * (1f + state.settings.letterSpacingEm)
                 val lineHeightPx = fontPx * state.settings.lineHeight
-                val contentHeight = (with(density) { maxHeight.toPx() } - with(density) { 36.dp.toPx() }).coerceAtLeast(lineHeightPx)
-                charsPerLine = (textWidth / charWidth).toInt().coerceAtLeast(1)
-                val rawLines = (contentHeight / lineHeightPx).toInt().coerceAtLeast(1)
+                val fittedChars = (textWidth / charWidth).toInt().coerceAtLeast(1)
+                charsPerLine = if (fittedChars > 1) fittedChars - 1 else fittedChars
+                val rawLines = (textHeight / lineHeightPx).toInt().coerceAtLeast(1)
                 linesPerPage = if (rawLines > 2) rawLines - 1 else rawLines
             }
             LaunchedEffect(state.text, charsPerLine, linesPerPage, state.writingMode, layoutReady) {
@@ -340,7 +346,11 @@ private fun ReadingBody(
                             textAlign = TextAlign.Center,
                         )
                     } else if (state.writingMode == WritingMode.VERTICAL) {
-                        val visible = visiblePageText(page.sentences, state.revealedCount, state.typedChars)
+                        val visible = visiblePageText(
+                            page.sentences,
+                            if (state.settings.typewriterEnabled) state.revealedCount else page.sentences.size,
+                            if (state.settings.typewriterEnabled) state.typedChars else Int.MAX_VALUE,
+                        )
                         val verticalPage = remember(visible, textWidth, textHeight, fontPx, state.settings.letterSpacingEm, state.settings.lineHeight) {
                             paginateVerticalFor(
                                 visible,
@@ -363,29 +373,35 @@ private fun ReadingBody(
                             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
                         )
                     } else {
-                        val sentenceGap = with(density) { (fontPx * state.settings.lineHeight).toDp() }
+                        val bodyStyle = TextStyle(
+                            fontFamily = FontFamily.Serif,
+                            fontSize = state.settings.fontSizeSp.sp,
+                            letterSpacing = state.settings.letterSpacingEm.em,
+                            lineHeight = (state.settings.fontSizeSp * state.settings.lineHeight).sp,
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            textAlign = TextAlign.Start,
+                        )
                         Column(
                             Modifier
                                 .fillMaxSize()
-                                .padding(horizontal = 28.dp, vertical = 18.dp),
-                            verticalArrangement = Arrangement.spacedBy(sentenceGap),
+                                .clipToBounds()
+                                .padding(start = sidePad, end = sidePad, top = topPad, bottom = bottomPad),
                         ) {
-                            val shownCount = state.revealedCount.coerceIn(0, page.sentences.size)
-                            for (index in 0 until shownCount) {
-                                val sentence = page.sentences[index]
-                                val text = if (index == shownCount - 1) {
-                                    SentenceReveal.visiblePrefix(sentence.text, state.typedChars)
-                                } else {
-                                    sentence.text
-                                }
+                            val shownCount = if (state.settings.typewriterEnabled) {
+                                state.revealedCount.coerceIn(0, page.sentences.size)
+                            } else {
+                                page.sentences.size
+                            }
+                            for (paragraph in paragraphTexts(
+                                page.sentences,
+                                shownCount,
+                                state.settings.typewriterEnabled,
+                                state.typedChars,
+                            )) {
                                 Text(
-                                    text = text,
+                                    text = paragraph,
                                     color = textColor,
-                                    fontFamily = FontFamily.Serif,
-                                    fontSize = state.settings.fontSizeSp.sp,
-                                    letterSpacing = state.settings.letterSpacingEm.em,
-                                    lineHeight = (state.settings.fontSizeSp * state.settings.lineHeight).sp,
-                                    textAlign = TextAlign.Start,
+                                    style = bodyStyle,
                                 )
                             }
                         }
@@ -396,6 +412,28 @@ private fun ReadingBody(
     }
 }
 
+private fun paragraphTexts(
+    sentences: List<app.moye.core.model.ReadingUnit>,
+    shownCount: Int,
+    typewriter: Boolean,
+    typedChars: Int,
+): List<String> {
+    val paragraphs = mutableListOf<StringBuilder>()
+    val count = shownCount.coerceIn(0, sentences.size)
+    for (index in 0 until count) {
+        val sentence = sentences[index]
+        val piece = if (typewriter && index == count - 1) {
+            SentenceReveal.visiblePrefix(sentence.text, typedChars)
+        } else {
+            sentence.text
+        }
+        val newParagraph = paragraphs.isEmpty() ||
+            sentence.paragraphIndex != sentences[index - 1].paragraphIndex
+        if (newParagraph) paragraphs += StringBuilder(piece) else paragraphs.last().append(piece)
+    }
+    return paragraphs.map { it.toString() }.filter { it.isNotEmpty() }
+}
+
 private fun visiblePageText(
     sentences: List<app.moye.core.model.ReadingUnit>,
     revealedCount: Int,
@@ -404,7 +442,9 @@ private fun visiblePageText(
     val count = revealedCount.coerceIn(0, sentences.size)
     return buildString {
         for (index in 0 until count) {
-            if (index > 0) append('\n')
+            if (index > 0 && sentences[index].paragraphIndex != sentences[index - 1].paragraphIndex) {
+                append('\n')
+            }
             val sentence = sentences[index]
             append(
                 if (index == count - 1) SentenceReveal.visiblePrefix(sentence.text, typedChars) else sentence.text,
