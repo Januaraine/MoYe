@@ -123,7 +123,7 @@ fun paginateVerticalFor(
 }
 
 @Composable
-fun ReadingSurface(
+fun SimulatedPage(
     direction: PageTurnDirection,
     onTap: (Float) -> Unit,
     onTurn: (Boolean) -> Unit,
@@ -171,13 +171,6 @@ fun ReadingSurface(
     ) {
         content()
     }
-}
-
-private fun isCenterTap(x: Float, y: Float, width: Int, height: Int): Boolean {
-    if (width <= 0 || height <= 0) return false
-    val nx = x / width
-    val ny = y / height
-    return nx in 0.32f..0.68f && ny in 0.30f..0.70f
 }
 
 @Composable

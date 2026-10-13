@@ -84,7 +84,6 @@ class ReaderViewModel(
     private val autoPlaySchedule = AutoPlayScheduler()
     private var typeGeneration = 0
     private var layoutGeneration = 0
-    private var playbackGeneration = 0
 
     private val _state = MutableStateFlow(ReaderUiState(settings = settingsStore.load()))
     val state: StateFlow<ReaderUiState> = _state.asStateFlow()
@@ -241,7 +240,6 @@ class ReaderViewModel(
         val snapshot = _state.value
         if (snapshot.status != ReaderStatus.READY) return
         val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: return
-        val playing = snapshot.playing
         when (val step = SentenceReveal.onTap(page, snapshot.toReveal(), snapshot.settings.typewriterEnabled)) {
             is RevealStep.Updated -> {
                 applyReveal(step.reveal)
@@ -249,7 +247,6 @@ class ReaderViewModel(
             }
             RevealStep.NextPage -> turnPage(forward = true)
         }
-        if (playing) restartPlayback()
     }
 
     fun toggleControls() {

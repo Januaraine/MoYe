@@ -143,7 +143,7 @@ class BookRepository(
                             charOffset = 0,
                             totalChars = parsed.book.text.length.toLong(),
                             importedAtEpochMs = System.currentTimeMillis(),
-                            coverRelativePath = storeCover(id, parsed.book),
+                            coverRelativePath = parsed.book.cover?.let { storeCover(id, it) },
                             contentHash = hash,
                         ),
                     )
