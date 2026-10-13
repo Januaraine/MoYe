@@ -77,7 +77,6 @@ import app.moye.R
 import app.moye.applyAppLanguage
 import app.moye.core.library.BookRecord
 import app.moye.core.library.filterBooks
-import app.moye.core.model.BookFormat
 import app.moye.core.model.ImportError
 import app.moye.data.ImportReport
 import app.moye.core.model.RemovalChoice
@@ -230,7 +229,7 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
                             items(visible, key = { it.id }) { book ->
                                 BookCard(
                                     book = book,
-                                    coverFile = if (book.format == BookFormat.EPUB) container.repository.coverFile(book) else null,
+                                    coverFile = container.repository.coverFile(book),
                                     coverRevision = state.coverRevision,
                                     onOpen = { onOpenBook(book.id) },
                                     onEdit = { viewModel.beginEdit(book) },
@@ -509,6 +508,7 @@ private fun importErrorText(error: ImportError): String = when (error) {
     ImportError.EMPTY -> stringResource(R.string.import_empty)
     ImportError.CORRUPT -> stringResource(R.string.import_corrupt)
     ImportError.TOO_LARGE -> stringResource(R.string.import_too_large)
+    ImportError.PROTECTED -> stringResource(R.string.import_protected)
 }
 
 @Composable

@@ -3,6 +3,13 @@ package app.moye.core.library
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.put
 import app.moye.core.model.BookFormat
 import app.moye.core.model.WritingMode
 import java.io.File
@@ -23,8 +30,11 @@ data class BookRecord(
     val contentHash: String? = null,
 )
 
-@Serializable
-private data class LibraryFile(val books: List<BookRecord> = emptyList())
+private sealed class ShelfEntry {
+    data class Book(val record: BookRecord) : ShelfEntry()
+
+    data class Opaque(val element: JsonElement) : ShelfEntry()
+}
 
 class FileLibraryStore(private val file: File) {
     private val json = Json {
@@ -34,16 +44,58 @@ class FileLibraryStore(private val file: File) {
     }
 
     fun load(): List<BookRecord> = synchronized(file) {
-        if (!file.exists()) return emptyList()
-        val text = file.readText()
-        if (text.isBlank()) return emptyList()
-        json.decodeFromString(LibraryFile.serializer(), text).books
+        readEntries().mapNotNull { (it as? ShelfEntry.Book)?.record }
     }
 
     fun save(books: List<BookRecord>) = synchronized(file) {
+        val current = readEntries()
+        val incoming = books.associateBy { it.id }
+        val written = mutableSetOf<String>()
+        val out = mutableListOf<JsonElement>()
+        for (entry in current) {
+            when (entry) {
+                is ShelfEntry.Opaque -> out += entry.element
+                is ShelfEntry.Book -> {
+                    val updated = incoming[entry.record.id] ?: continue
+                    out += json.encodeToJsonElement(BookRecord.serializer(), updated)
+                    written += updated.id
+                }
+            }
+        }
+        for (book in books) {
+            if (book.id !in written) {
+                out += json.encodeToJsonElement(BookRecord.serializer(), book)
+            }
+        }
+        write(buildJsonObject { put("books", JsonArray(out)) })
+    }
+
+    private fun readEntries(): List<ShelfEntry> {
+        if (!file.exists()) return emptyList()
+        val text = file.readText()
+        if (text.isBlank()) return emptyList()
+        val root = json.parseToJsonElement(text) as? JsonObject
+            ?: error("Shelf file is not a JSON object")
+        val books = root["books"] as? JsonArray
+            ?: error("Shelf file has no books array")
+        return books.map { element ->
+            val obj = element as? JsonObject
+            if (obj == null) {
+                ShelfEntry.Opaque(element)
+            } else {
+                try {
+                    ShelfEntry.Book(json.decodeFromJsonElement(BookRecord.serializer(), obj))
+                } catch (_: Exception) {
+                    ShelfEntry.Opaque(element)
+                }
+            }
+        }
+    }
+
+    private fun write(root: JsonObject) {
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(json.encodeToString(LibraryFile(books)))
+        tmp.writeText(json.encodeToString(JsonObject.serializer(), root))
         if (file.exists() && !file.delete()) {
             file.writeText(tmp.readText())
             tmp.delete()

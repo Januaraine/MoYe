@@ -43,9 +43,10 @@ class BookParserTest {
         assertEquals(ImportError.CORRUPT, (BookParser.parse(BookFormat.TXT, binary, "bad.txt") as ParseResult.Err).error)
         val fake = File(dir, "bad.epub").apply { writeText("not a zip") }
         assertEquals(ImportError.CORRUPT, (BookParser.parse(BookFormat.EPUB, fake, "bad.epub") as ParseResult.Err).error)
-        assertEquals(null, BookParser.detectFormat("notes.pdf", "application/pdf"))
+        assertEquals(BookFormat.PDF, BookParser.detectFormat("notes.pdf", "application/pdf"))
         assertEquals(BookFormat.EPUB, BookParser.detectFormat("book.EPUB", null))
         assertEquals(BookFormat.TXT, BookParser.detectFormat(null, "text/plain"))
+        assertEquals(null, BookParser.detectFormat("notes.docx", "application/octet-stream"))
     }
 
     @Test

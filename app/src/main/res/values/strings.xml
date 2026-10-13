@@ -11,7 +11,7 @@
     <string name="search_hint">搜索书名或作者</string>
     <string name="clear_search">清除搜索</string>
     <string name="empty_shelf">书架还是空的</string>
-    <string name="empty_shelf_hint">导入你自己的 TXT 或 EPUB，文件只保存在这台设备上。</string>
+    <string name="empty_shelf_hint">导入你自己的 TXT、EPUB、PDF、CBZ、CBR 或 AZW 文件，副本只保存在这台设备上。</string>
     <string name="no_search_results">没有匹配的作品</string>
     <string name="shelf_load_failed">无法读取本地书架</string>
     <string name="retry">重试</string>
@@ -38,13 +38,14 @@
     <string name="removed_kept">已移出书架，本地副本仍保留。</string>
     <string name="removed_deleted">已移出书架，并删除了这本作品的本地副本。</string>
     <string name="remove_failed">没有移除作品，本地文件保持原样。</string>
-    <string name="import_unsupported">不支持的格式。请选择 TXT 或 EPUB 文件。</string>
+    <string name="import_unsupported">不支持的格式。请选择 TXT、EPUB、PDF、CBZ、CBR、AZW 或 AZW4 文件。</string>
     <string name="import_unreadable">无法读取所选文件。</string>
-    <string name="import_empty">文件里没有可阅读的正文。</string>
+    <string name="import_empty">文件里没有可阅读的内容。</string>
     <string name="import_corrupt">文件已损坏或无法解析。</string>
     <string name="import_too_large">文件太大，无法导入。</string>
+    <string name="import_protected">文件有加密保护，无法导入。</string>
     <string name="privacy">关于隐私</string>
-    <string name="privacy_body">墨页是本地阅读工具。它只打开你在系统文件选择器里明确选中的 TXT 或 EPUB，并把副本放在应用私有目录。应用不要求账号，也不会上传书籍或阅读记录。请确认你有权阅读导入的文件。</string>
+    <string name="privacy_body">墨页是本地阅读工具。它只打开你在系统文件选择器里明确选中的 TXT、EPUB、PDF、CBZ、CBR、AZW 或 AZW4，并把副本放在应用私有目录。应用不要求账号，也不会上传书籍或阅读记录。请确认你有权阅读导入的文件。</string>
     <string name="close">关闭</string>
     <string name="language">界面语言</string>
     <string name="language_zh">中文</string>
@@ -88,4 +89,5 @@
     <string name="next_chapter">下一章</string>
     <string name="no_chapters">这部作品没有可跳转的目录，仍可从头读到尾。</string>
     <string name="tap_hint">左侧上一页，右侧继续阅读，中间打开菜单。滑动直接翻页。</string>
+    <string name="tap_hint_pages">左侧上一页，右侧下一页，中间打开菜单。滑动直接翻页。</string>
 </resources>
