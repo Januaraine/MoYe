@@ -4,25 +4,22 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group
-        android:pivotX="54"
-        android:pivotY="54"
-        android:scaleX="0.76"
-        android:scaleY="0.76">
-        <path
-            android:pathData="M27,88 V49 A27,27 0 0 1 81,49 V88"
-            android:strokeColor="@color/icon_ink"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round"
-            android:strokeWidth="3" />
-        <path
-            android:pathData="M27,67.2 C36,67.8 48,73.6 54,75.6 C60,73.6 72,67.8 81,67.2 M27,73.2 C36,74.4 48,80.6 54,82.4 C60,80.6 72,74.4 81,73.2 M27,79.2 C36,81.4 48,86.6 54,88 C60,86.6 72,81.4 81,79.2"
-            android:strokeColor="@color/icon_ink"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round"
-            android:strokeWidth="3" />
-        <path
-            android:fillColor="@color/icon_ink"
-            android:pathData="M54,33.4 Q55.1,38.4 60.1,39.5 Q55.1,40.6 54,45.6 Q52.9,40.6 47.9,39.5 Q52.9,38.4 54,33.4 Z" />
-    </group>
+    <path
+        android:fillColor="@color/icon_ink"
+        android:pathData="M42.17,79.55 L45.39,79.04 L48.69,77.61 L51.52,74.29 L54.33,71.49 L57.59,68.16 L60.80,65.42 L63.95,63.67 L67.06,62.36 L70.61,61.46 L74.28,60.96 L74.00,59.04 L70.22,59.61 L66.47,60.69 L63.21,62.26 L59.97,64.32 L56.79,67.35 L53.67,70.87 L51.01,73.84 L48.37,77.21 L45.28,78.67 L42.12,79.22 Z" />
+    <path
+        android:fillColor="@color/icon_ink"
+        android:pathData="M51.12,80.12 L54.37,77.63 L57.10,74.89 L60.27,71.67 L63.10,69.29 L65.75,67.91 L68.38,66.85 L71.40,66.14 L74.84,65.69 L74.55,63.66 L71.01,64.19 L67.78,65.16 L65.04,66.55 L62.36,68.30 L59.61,71.00 L56.60,74.43 L54.04,77.26 L50.86,79.79 Z" />
+    <path
+        android:fillColor="@color/icon_ink"
+        android:pathData="M56.31,80.49 L59.79,79.48 L63.17,77.87 L66.12,77.41 L68.88,77.53 L71.76,77.64 L74.53,77.50 L73.91,71.92 L71.20,72.38 L68.30,73.11 L65.28,74.14 L62.16,75.80 L59.16,78.15 L55.94,79.41 Z" />
+    <path
+        android:fillColor="@color/icon_ink"
+        android:pathData="M54.00,41.00 Q54.80,46.02 58.94,46.86 Q54.80,47.69 54.00,52.71 Q53.20,47.69 49.06,46.86 Q53.20,46.02 54.00,41.00 Z" />
+    <path
+        android:pathData="M33.48,79.84 V50.20 A20.52,20.52 0 0 1 74.52,50.20 V79.84"
+        android:strokeColor="@color/icon_ink"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2.15" />
 </vector>

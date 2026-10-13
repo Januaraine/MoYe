@@ -6,14 +6,33 @@ import app.moye.core.text.ChapterDetector
 import java.io.File
 
 object BookParser {
-    const val MAX_BYTES = 80L * 1024L * 1024L
+    const val MAX_BYTES = 200L * 1024L * 1024L
 
     fun detectFormat(fileName: String?, mime: String?): BookFormat? {
         val name = fileName?.lowercase()?.substringAfterLast('/')?.substringAfterLast('\\').orEmpty()
         val type = mime?.lowercase()?.substringBefore(';')?.trim().orEmpty()
-        return when {
-            name.endsWith(".epub") || type == "application/epub+zip" -> BookFormat.EPUB
-            name.endsWith(".txt") || type == "text/plain" -> BookFormat.TXT
+        val byName = when {
+            name.endsWith(".epub") -> BookFormat.EPUB
+            name.endsWith(".pdf") -> BookFormat.PDF
+            name.endsWith(".cbz") -> BookFormat.CBZ
+            name.endsWith(".cbr") -> BookFormat.CBR
+            name.endsWith(".azw4") -> BookFormat.AZW4
+            name.endsWith(".azw") -> BookFormat.AZW
+            name.endsWith(".txt") -> BookFormat.TXT
+            else -> null
+        }
+        if (byName != null) return byName
+        return when (type) {
+            "application/epub+zip" -> BookFormat.EPUB
+            "application/pdf" -> BookFormat.PDF
+            "application/vnd.comicbook+zip", "application/x-cbz" -> BookFormat.CBZ
+            "application/vnd.comicbook-rar",
+            "application/x-cbr",
+            "application/vnd.rar",
+            "application/x-rar-compressed",
+            -> BookFormat.CBR
+            "application/vnd.amazon.ebook", "application/x-mobipocket-ebook" -> BookFormat.AZW
+            "text/plain" -> BookFormat.TXT
             else -> null
         }
     }
@@ -23,6 +42,10 @@ object BookParser {
         return when (format) {
             BookFormat.TXT -> parseTxt(file, displayName)
             BookFormat.EPUB -> EpubParser.parse(file)
+            BookFormat.PDF -> PdfParser.parse(file, displayName)
+            BookFormat.CBZ, BookFormat.CBR -> ComicArchive.parse(file, format, displayName)
+            BookFormat.AZW -> AzwParser.parseText(file, displayName)
+            BookFormat.AZW4 -> AzwParser.parseReplica(file, displayName)
         }
     }
 

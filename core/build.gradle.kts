@@ -17,6 +17,7 @@ tasks.withType<KotlinCompile>().configureEach {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("com.github.junrar:junrar:7.5.5")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.0.21")
 }
 
