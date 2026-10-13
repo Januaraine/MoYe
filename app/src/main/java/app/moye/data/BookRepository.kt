@@ -3,7 +3,9 @@ package app.moye.data
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import app.moye.core.importing.AzwParser
 import app.moye.core.importing.BookParser
+import app.moye.core.importing.ComicArchive
 import app.moye.core.importing.EpubParser
 import app.moye.core.importing.ParseResult
 import app.moye.core.library.BookFiles
@@ -15,9 +17,12 @@ import app.moye.core.library.Library
 import app.moye.core.library.copyWithLimit
 import app.moye.core.model.BookFormat
 import app.moye.core.model.ContentError
+import app.moye.core.model.Delivery
 import app.moye.core.model.EmbeddedCover
 import app.moye.core.model.ImportError
 import app.moye.core.model.ParsedBook
+import app.moye.core.model.isPaged
+import app.moye.core.model.storageExtension
 import app.moye.core.model.RemovalChoice
 import app.moye.core.model.RemovalResult
 import kotlinx.coroutines.Dispatchers
@@ -129,9 +134,24 @@ class BookRepository(
                 is ParseResult.Err -> ImportOne.Failed(parsed.error)
                 is ParseResult.Ok -> {
                     val id = UUID.randomUUID().toString()
-                    val extension = if (format == BookFormat.EPUB) "epub" else "txt"
-                    val relativePath = bookFiles.place(id, extension, temp)
+                    val relativePath = bookFiles.place(id, format.storageExtension(), temp)
+                    val stored = try {
+                        bookFiles.resolve(relativePath)
+                    } catch (_: Exception) {
+                        return ImportOne.Failed(ImportError.UNREADABLE)
+                    }
+                    val prepared = try {
+                        prepareStored(format, stored, parsed.book)
+                    } catch (_: Exception) {
+                        bookFiles.deleteCopy(relativePath)
+                        return ImportOne.Failed(ImportError.UNREADABLE)
+                    }
+                    if (prepared.error != null) {
+                        bookFiles.deleteCopy(relativePath)
+                        return ImportOne.Failed(prepared.error)
+                    }
                     val fallback = name?.substringAfterLast('/')?.substringBeforeLast('.')?.ifBlank { null } ?: "Untitled"
+                    val cover = prepared.cover ?: parsed.book.cover
                     library.add(
                         BookRecord(
                             id = id,
@@ -141,9 +161,9 @@ class BookRepository(
                             relativePath = relativePath,
                             declaredWritingMode = parsed.book.declaredWritingMode,
                             charOffset = 0,
-                            totalChars = parsed.book.text.length.toLong(),
+                            totalChars = prepared.totalChars,
                             importedAtEpochMs = System.currentTimeMillis(),
-                            coverRelativePath = parsed.book.cover?.let { storeCover(id, it) },
+                            coverRelativePath = cover?.let { storeCover(id, it) },
                             contentHash = hash,
                         ),
                     )
@@ -176,10 +196,40 @@ class BookRepository(
                 if (parsed.error == ImportError.EMPTY) ContentError.EMPTY else ContentError.CORRUPT,
             )
             is ParseResult.Ok -> {
-                library.updateProgress(id, record.charOffset, parsed.book.text.length.toLong())
+                val opened = openParsed(record, file, parsed.book)
+                    ?: return ContentLoad.Failed(ContentError.CORRUPT)
+                if (opened.delivery == Delivery.TEXT && opened.text.isEmpty()) {
+                    return ContentLoad.Failed(ContentError.EMPTY)
+                }
+                val total = if (opened.delivery == Delivery.PAGES) {
+                    opened.pageCount.toLong()
+                } else {
+                    opened.text.length.toLong()
+                }
+                library.updateProgress(id, record.charOffset, total)
                 val refreshed = library.get(id) ?: record
-                ContentLoad.Ready(ensureCover(refreshed, parsed.book), parsed.book)
+                ContentLoad.Ready(ensureCover(refreshed, opened), opened)
             }
+        }
+    }
+
+    fun renderPage(id: String, index: Int, width: Int, height: Int): android.graphics.Bitmap? {
+        val record = try {
+            library.get(id)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        val file = try {
+            bookFiles.resolve(record.relativePath)
+        } catch (_: Exception) {
+            return null
+        }
+        if (!file.isFile) return null
+        return when (record.format) {
+            BookFormat.PDF -> PdfPages.render(file, index, width, height)
+            BookFormat.AZW4 -> replicaPdf(file)?.let { PdfPages.render(it, index, width, height) }
+            BookFormat.CBZ, BookFormat.CBR -> ComicBitmaps.decode(file, record.format, index, maxOf(width, height))
+            else -> null
         }
     }
 
@@ -209,7 +259,19 @@ class BookRepository(
     fun syncCovers(): Boolean {
         var changed = false
         for (record in library.list()) {
-            if (record.format != BookFormat.EPUB) continue
+            if (record.format != BookFormat.EPUB) {
+                if (record.coverRelativePath != null || !record.format.isPaged()) continue
+                val source = try {
+                    bookFiles.resolve(record.relativePath)
+                } catch (_: Exception) {
+                    continue
+                }
+                if (!source.isFile) continue
+                val cover = pageCover(record.format, source) ?: continue
+                val path = storeCover(record.id, cover) ?: continue
+                if (library.updateCover(record.id, path) != null) changed = true
+                continue
+            }
             val source = try {
                 bookFiles.resolve(record.relativePath)
             } catch (_: Exception) {
@@ -238,6 +300,7 @@ class BookRepository(
 
     private fun ensureCover(record: BookRecord, book: ParsedBook): BookRecord {
         val cover = book.cover ?: return record
+        if (book.delivery == Delivery.PAGES && coverFile(record) != null) return record
         if (sameCover(record, cover)) return record
         val path = storeCover(record.id, cover) ?: return record
         return library.updateCover(record.id, path) ?: record.copy(coverRelativePath = path)
@@ -246,6 +309,91 @@ class BookRepository(
     private fun sameCover(record: BookRecord, cover: EmbeddedCover): Boolean {
         val existing = coverFile(record) ?: return false
         return existing.length() == cover.bytes.size.toLong() && existing.readBytes().contentEquals(cover.bytes)
+    }
+
+    private data class Prepared(val totalChars: Long, val cover: EmbeddedCover?, val error: ImportError? = null)
+
+    private fun prepareStored(format: BookFormat, stored: File, book: ParsedBook): Prepared {
+        return when (format) {
+            BookFormat.PDF -> {
+                val count = PdfPages.count(stored)
+                if (count <= 0) {
+                    Prepared(0, null, ImportError.CORRUPT)
+                } else {
+                    Prepared(count.toLong(), PdfPages.cover(stored) ?: book.cover)
+                }
+            }
+            BookFormat.AZW4 -> {
+                val pdf = replicaPdf(stored)
+                val count = if (pdf == null) 0 else PdfPages.count(pdf)
+                if (pdf == null || count <= 0) {
+                    Prepared(0, null, ImportError.CORRUPT)
+                } else {
+                    Prepared(count.toLong(), PdfPages.cover(pdf) ?: book.cover)
+                }
+            }
+            BookFormat.CBZ, BookFormat.CBR -> {
+                if (book.pageCount <= 0) Prepared(0, null, ImportError.EMPTY) else Prepared(book.pageCount.toLong(), book.cover)
+            }
+            else -> Prepared(book.text.length.toLong(), book.cover)
+        }
+    }
+
+    private fun openParsed(record: BookRecord, file: File, book: ParsedBook): ParsedBook? {
+        return when (record.format) {
+            BookFormat.PDF -> {
+                val count = PdfPages.count(file)
+                if (count <= 0) {
+                    null
+                } else {
+                    book.copy(pageCount = count, delivery = Delivery.PAGES, cover = book.cover ?: missingCover(record, file))
+                }
+            }
+            BookFormat.AZW4 -> {
+                val pdf = replicaPdf(file) ?: return null
+                val count = PdfPages.count(pdf)
+                if (count <= 0) {
+                    null
+                } else {
+                    book.copy(pageCount = count, delivery = Delivery.PAGES, cover = book.cover ?: missingCover(record, pdf))
+                }
+            }
+            BookFormat.CBZ, BookFormat.CBR -> if (book.pageCount <= 0) null else book
+            else -> book
+        }
+    }
+
+    private fun missingCover(record: BookRecord, file: File): EmbeddedCover? {
+        if (coverFile(record) != null) return null
+        return PdfPages.cover(file)
+    }
+
+    private fun pageCover(format: BookFormat, file: File): EmbeddedCover? {
+        return when (format) {
+            BookFormat.PDF -> PdfPages.cover(file)
+            BookFormat.AZW4 -> replicaPdf(file)?.let { PdfPages.cover(it) }
+            BookFormat.CBZ, BookFormat.CBR -> {
+                val parsed = ComicArchive.parse(file, format, null)
+                (parsed as? ParseResult.Ok)?.book?.cover
+            }
+            else -> null
+        }
+    }
+
+    private fun replicaPdf(azw4: File): File? {
+        val cached = File(azw4.parentFile, "replica.pdf")
+        if (cached.isFile && cached.length() > 0L) return cached
+        val bytes = try {
+            AzwParser.extractPdf(azw4)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        return try {
+            cached.writeBytes(bytes)
+            cached
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun displayName(uri: Uri): String? {

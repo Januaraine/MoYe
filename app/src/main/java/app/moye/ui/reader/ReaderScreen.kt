@@ -6,6 +6,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
@@ -171,11 +174,12 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                     when (ReadingZones.fromX(fraction)) {
                         ReadingZone.CONTROLS -> viewModel.toggleControls()
                         ReadingZone.PREVIOUS_PAGE -> viewModel.turnPage(forward = false)
-                        ReadingZone.ADVANCE -> viewModel.onReadingTap()
+                        ReadingZone.ADVANCE -> if (state.paged) viewModel.turnPage(forward = true) else viewModel.onReadingTap()
                     }
                 },
                 onTurn = { forward -> viewModel.turnPage(forward) },
                 onLayout = viewModel::bindLayout,
+                onPageBounds = viewModel::onPageBounds,
             )
         }
         AnimatedVisibility(
@@ -232,18 +236,19 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                     .background(palette.background)
                     .clickable(remember { MutableInteractionSource() }, indication = null) {},
             ) {
+                val shownPages = if (state.paged) state.pageCount else state.pages.size
                 Text(
                     stringResource(
                         R.string.page_position,
                         (state.pageIndex + 1).coerceAtLeast(1),
-                        state.pages.size.coerceAtLeast(1),
+                        shownPages.coerceAtLeast(1),
                     ),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     color = palette.muted,
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    stringResource(R.string.tap_hint),
+                    stringResource(if (state.paged) R.string.tap_hint_pages else R.string.tap_hint),
                     modifier = Modifier.fillMaxWidth(),
                     color = palette.muted,
                     textAlign = TextAlign.Center,
@@ -289,14 +294,59 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
 }
 
 @Composable
+private fun ColumnScope.PagedBody(
+    state: ReaderUiState,
+    textColor: Color,
+    onTap: (Float) -> Unit,
+    onTurn: (Boolean) -> Unit,
+    onPageBounds: (Int, Int) -> Unit,
+) {
+    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+        val density = LocalDensity.current
+        val widthPx = with(density) { maxWidth.roundToPx() }
+        val heightPx = with(density) { maxHeight.roundToPx() }
+        LaunchedEffect(state.pageIndex, widthPx, heightPx) {
+            if (widthPx > 1 && heightPx > 1) onPageBounds(widthPx, heightPx)
+        }
+        SimulatedPage(
+            direction = state.settings.pageTurnDirection,
+            onTap = onTap,
+            onTurn = onTurn,
+        ) {
+            val image = state.pageImage
+            when {
+                image != null -> Image(
+                    bitmap = image,
+                    contentDescription = state.title,
+                    modifier = Modifier.fillMaxSize().padding(8.dp),
+                    contentScale = ContentScale.Fit,
+                )
+                state.pageFailed -> Text(
+                    stringResource(R.string.content_corrupt),
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                    color = textColor,
+                    textAlign = TextAlign.Center,
+                )
+                else -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = textColor)
+            }
+        }
+    }
+}
+
+@Composable
 private fun ReadingBody(
     state: ReaderUiState,
     textColor: Color,
     onTap: (Float) -> Unit,
     onTurn: (Boolean) -> Unit,
     onLayout: (Int, Int, Float) -> Unit,
+    onPageBounds: (Int, Int) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
+        if (state.paged) {
+            PagedBody(state, textColor, onTap, onTurn, onPageBounds)
+            return@Column
+        }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val density = LocalDensity.current
             val fontPx = with(density) { state.settings.fontSizeSp.sp.toPx() }
@@ -521,14 +571,16 @@ private fun ReaderBottomBar(
         TextButton(onClick = onPrevious) {
             Text(stringResource(R.string.previous), color = palette.accent)
         }
-        IconButton(onClick = onToggle) {
-            Icon(
-                if (state.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = stringResource(if (state.playing) R.string.pause else R.string.play),
-                tint = palette.accent,
-            )
+        if (!state.paged) {
+            IconButton(onClick = onToggle) {
+                Icon(
+                    if (state.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = stringResource(if (state.playing) R.string.pause else R.string.play),
+                    tint = palette.accent,
+                )
+            }
+            Text(stringResource(R.string.speed_value, state.settings.playbackSpeed), color = palette.muted)
         }
-        Text(stringResource(R.string.speed_value, state.settings.playbackSpeed), color = palette.muted)
         TextButton(onClick = onNext) {
             Text(stringResource(R.string.next), color = palette.accent)
         }
@@ -551,6 +603,28 @@ private fun SettingsSheet(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(stringResource(R.string.settings), color = textColor, style = MaterialTheme.typography.titleLarge, fontFamily = FontFamily.Serif)
+        if (state.paged) {
+            Text(stringResource(R.string.theme), color = textColor)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ThemeChip(ReaderTheme.PAPER, R.string.theme_paper, settings.theme, onChange)
+                ThemeChip(ReaderTheme.LIGHT, R.string.theme_light, settings.theme, onChange)
+                ThemeChip(ReaderTheme.DARK, R.string.theme_dark, settings.theme, onChange)
+            }
+            Text(stringResource(R.string.page_direction), color = textColor)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = settings.pageTurnDirection == PageTurnDirection.HORIZONTAL,
+                    onClick = { onChange { it.copy(pageTurnDirection = PageTurnDirection.HORIZONTAL) } },
+                    label = { Text(stringResource(R.string.direction_horizontal)) },
+                )
+                FilterChip(
+                    selected = settings.pageTurnDirection == PageTurnDirection.VERTICAL,
+                    onClick = { onChange { it.copy(pageTurnDirection = PageTurnDirection.VERTICAL) } },
+                    label = { Text(stringResource(R.string.direction_vertical)) },
+                )
+            }
+            return@Column
+        }
         SpeedSlider(
             stringResource(R.string.typewriter_speed),
             settings.typewriterSpeed,
