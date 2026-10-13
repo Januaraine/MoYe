@@ -26,7 +26,7 @@ data class ReaderSettings(
     fun sanitized(): ReaderSettings = copy(
         fontSizeSp = fontSizeSp.coerceIn(14f, 36f),
         letterSpacingEm = letterSpacingEm.coerceIn(0f, 0.3f),
-        lineHeight = lineHeight.coerceIn(1.1f, 2.2f),
+        lineHeight = lineHeight.coerceIn(MIN_LINE_HEIGHT, MAX_LINE_HEIGHT),
         playbackSpeed = PlaybackTiming.clampSpeed(playbackSpeed),
         typewriterSpeed = TypewriterTiming.clampSpeed(typewriterSpeed),
         languageTag = when (languageTag) {
@@ -34,6 +34,11 @@ data class ReaderSettings(
             else -> ""
         },
     )
+
+    companion object {
+        const val MIN_LINE_HEIGHT = 1f
+        const val MAX_LINE_HEIGHT = 3.5f
+    }
 }
 
 class FileSettingsStore(private val file: File) {

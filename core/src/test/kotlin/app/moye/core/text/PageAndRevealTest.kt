@@ -47,6 +47,29 @@ class PageAndRevealTest {
     }
 
     @Test
+    fun latinLettersTakeHalfACellSoThePageFills() {
+        val text = "a".repeat(20)
+        val pages = PageComposer.compose(
+            SentenceSegmenter.segment(text),
+            charsPerLine = 10,
+            linesPerPage = 1,
+            textLength = text.length,
+        )
+        assertEquals(1, pages.size)
+        assertEquals(text, pages.single().sentences.joinToString("") { it.text })
+    }
+
+    @Test
+    fun aNarrowerLatinAdvancePutsMoreTextOnThePage() {
+        val text = "a".repeat(20)
+        val units = SentenceSegmenter.segment(text)
+        val wide = PageComposer.compose(units, charsPerLine = 10, linesPerPage = 1, textLength = text.length, latinAdvance = 1f)
+        val narrow = PageComposer.compose(units, charsPerLine = 10, linesPerPage = 1, textLength = text.length, latinAdvance = 0.5f)
+        assertTrue(wide.size > narrow.size)
+        assertEquals(1, narrow.size)
+    }
+
+    @Test
     fun sentencesAreNotPagesWhenMoreThanOneFits() {
         val units = SentenceSegmenter.segment(sample)
         val pages = PageComposer.compose(units, charsPerLine = 20, linesPerPage = 3, textLength = sample.length)

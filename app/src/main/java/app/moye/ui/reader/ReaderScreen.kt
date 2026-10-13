@@ -66,8 +66,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -293,19 +295,72 @@ private fun ReadingBody(
     textColor: Color,
     onTap: (Float) -> Unit,
     onTurn: (Boolean) -> Unit,
-    onLayout: (Int, Int) -> Unit,
+    onLayout: (Int, Int, Float) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val density = LocalDensity.current
             val fontPx = with(density) { state.settings.fontSizeSp.sp.toPx() }
             val paddingPx = with(density) { 8.dp.toPx() }
-            val topPad = 18.dp
-            val bottomPad = 28.dp
+            val topPad = 16.dp
+            val bottomPad = 16.dp
             val sidePad = 28.dp
             val textWidth = (with(density) { maxWidth.toPx() } - with(density) { sidePad.toPx() } * 2).coerceAtLeast(fontPx)
             val textHeight = (with(density) { maxHeight.toPx() } - with(density) { topPad.toPx() + bottomPad.toPx() }).coerceAtLeast(fontPx)
             val layoutReady = maxWidth > 48.dp && maxHeight > 48.dp
+            val measurer = rememberTextMeasurer()
+            val bodyStyle = TextStyle(
+                fontFamily = FontFamily.Serif,
+                fontSize = state.settings.fontSizeSp.sp,
+                letterSpacing = state.settings.letterSpacingEm.em,
+                lineHeight = (state.settings.fontSizeSp * state.settings.lineHeight).sp,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                textAlign = TextAlign.Start,
+            )
+            val wide = Constraints(maxWidth = 100_000)
+            val cjkSample = "国国国国国国国国"
+            val latinSample = "abcdefghijklmnopqrstuvwxyz"
+            val cjkWidth = measurer.measure(
+                cjkSample,
+                style = bodyStyle,
+                overflow = TextOverflow.Clip,
+                softWrap = false,
+                maxLines = 1,
+                constraints = wide,
+            ).size.width / cjkSample.length.toFloat()
+            val latinWidth = measurer.measure(
+                latinSample,
+                style = bodyStyle,
+                overflow = TextOverflow.Clip,
+                softWrap = false,
+                maxLines = 1,
+                constraints = wide,
+            ).size.width / latinSample.length.toFloat()
+            val latinAdvance = if (cjkWidth > 1f) (latinWidth / cjkWidth).coerceIn(0.25f, 1f) else 0.45f
+            val quantizedAdvance = (latinAdvance * 100).toInt() / 100f
+            val lineProbe = measurer.measure(
+                "国\n国\n国\n国",
+                style = bodyStyle,
+                constraints = Constraints(maxWidth = textWidth.toInt().coerceAtLeast(1)),
+            )
+            val linePx = (lineProbe.size.height / 4f).coerceAtLeast(fontPx * 0.8f)
+            val baseLines = (textHeight / linePx).toInt().coerceAtLeast(1)
+            var extraLines by remember(
+                state.text,
+                quantizedAdvance,
+                baseLines,
+                state.settings.fontSizeSp,
+                state.settings.lineHeight,
+                state.settings.letterSpacingEm,
+            ) { mutableIntStateOf(0) }
+            var lastFitHeight by remember(
+                state.text,
+                quantizedAdvance,
+                baseLines,
+                state.settings.fontSizeSp,
+                state.settings.lineHeight,
+                state.settings.letterSpacingEm,
+            ) { mutableIntStateOf(-1) }
             val charsPerLine: Int
             val linesPerPage: Int
             if (state.writingMode == WritingMode.VERTICAL) {
@@ -320,15 +375,11 @@ private fun ReadingBody(
                 charsPerLine = chars
                 linesPerPage = columns
             } else {
-                val charWidth = fontPx * (1f + state.settings.letterSpacingEm)
-                val lineHeightPx = fontPx * state.settings.lineHeight
-                val fittedChars = (textWidth / charWidth).toInt().coerceAtLeast(1)
-                charsPerLine = if (fittedChars > 1) fittedChars - 1 else fittedChars
-                val rawLines = (textHeight / lineHeightPx).toInt().coerceAtLeast(1)
-                linesPerPage = if (rawLines > 2) rawLines - 1 else rawLines
+                charsPerLine = (textWidth / cjkWidth.coerceAtLeast(1f)).toInt().coerceAtLeast(1)
+                linesPerPage = (baseLines + extraLines).coerceAtMost(baseLines * 2)
             }
-            LaunchedEffect(state.text, charsPerLine, linesPerPage, state.writingMode, layoutReady) {
-                if (layoutReady) onLayout(charsPerLine, linesPerPage)
+            LaunchedEffect(state.text, charsPerLine, linesPerPage, quantizedAdvance, state.writingMode, layoutReady) {
+                if (layoutReady) onLayout(charsPerLine, linesPerPage, quantizedAdvance)
             }
             if (state.pages.isEmpty()) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center), color = textColor)
@@ -375,38 +426,39 @@ private fun ReadingBody(
                             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
                         )
                     } else {
-                        val bodyStyle = TextStyle(
-                            fontFamily = FontFamily.Serif,
-                            fontSize = state.settings.fontSizeSp.sp,
-                            letterSpacing = state.settings.letterSpacingEm.em,
-                            lineHeight = (state.settings.fontSizeSp * state.settings.lineHeight).sp,
-                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                            textAlign = TextAlign.Start,
-                        )
-                        Column(
-                            Modifier
-                                .fillMaxSize()
-                                .clipToBounds()
-                                .padding(start = sidePad, end = sidePad, top = topPad, bottom = bottomPad),
-                        ) {
-                            val shownCount = if (state.settings.typewriterEnabled) {
-                                state.revealedCount.coerceIn(0, page.sentences.size)
-                            } else {
-                                page.sentences.size
+                        val fullPage = paragraphTexts(page.sentences, page.sentences.size, false, 0).joinToString("\n")
+                        val measuredHeight = measurer.measure(
+                            fullPage,
+                            style = bodyStyle,
+                            constraints = Constraints(maxWidth = textWidth.toInt().coerceAtLeast(1)),
+                        ).size.height
+                        LaunchedEffect(measuredHeight, state.pageIndex, linesPerPage, state.pages.size) {
+                            if (state.pageIndex >= state.pages.lastIndex) return@LaunchedEffect
+                            val slack = textHeight - measuredHeight
+                            if (slack >= linePx && extraLines < baseLines && measuredHeight != lastFitHeight) {
+                                lastFitHeight = measuredHeight
+                                extraLines += (slack / linePx).toInt().coerceAtLeast(1)
                             }
-                            for (paragraph in paragraphTexts(
+                        }
+                        val shownCount = if (state.settings.typewriterEnabled) {
+                            state.revealedCount.coerceIn(0, page.sentences.size)
+                        } else {
+                            page.sentences.size
+                        }
+                        Text(
+                            text = paragraphTexts(
                                 page.sentences,
                                 shownCount,
                                 state.settings.typewriterEnabled,
                                 state.typedChars,
-                            )) {
-                                Text(
-                                    text = paragraph,
-                                    color = textColor,
-                                    style = bodyStyle,
-                                )
-                            }
-                        }
+                            ).joinToString("\n"),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clipToBounds()
+                                .padding(start = sidePad, end = sidePad, top = topPad, bottom = bottomPad),
+                            color = textColor,
+                            style = bodyStyle,
+                        )
                     }
                 }
             }
@@ -523,7 +575,13 @@ private fun SettingsSheet(
         SettingSlider(stringResource(R.string.letter_spacing), settings.letterSpacingEm, 0f, 0.3f, textColor) { value ->
             onChange { it.copy(letterSpacingEm = value) }
         }
-        SettingSlider(stringResource(R.string.line_spacing), settings.lineHeight, 1.1f, 2.2f, textColor) { value ->
+        SettingSlider(
+            stringResource(R.string.line_spacing),
+            settings.lineHeight,
+            app.moye.core.settings.ReaderSettings.MIN_LINE_HEIGHT,
+            app.moye.core.settings.ReaderSettings.MAX_LINE_HEIGHT,
+            textColor,
+        ) { value ->
             onChange { it.copy(lineHeight = value) }
         }
         Text(stringResource(R.string.theme), color = textColor)

@@ -75,6 +75,7 @@ class ReaderViewModel(
 ) : ViewModel() {
     private val timer = ReadingTimer()
     private val persistMutex = Mutex()
+    private var appliedLatin = -1f
     private var screenVisible = false
     private var activityResumed = false
     private var playJob: Job? = null
@@ -180,19 +181,27 @@ class ReaderViewModel(
         }
     }
 
-    fun bindLayout(charsPerLine: Int, linesPerPage: Int) {
+    fun bindLayout(charsPerLine: Int, linesPerPage: Int, latinAdvance: Float = 0.5f) {
         val snapshot = _state.value
         if (snapshot.status != ReaderStatus.READY) return
         val chars = charsPerLine.coerceAtLeast(1)
         val lines = linesPerPage.coerceAtLeast(1)
-        if (snapshot.layoutChars == chars && snapshot.layoutLines == lines && snapshot.pages.isNotEmpty()) return
+        val advance = latinAdvance.coerceIn(0.2f, 1f)
+        if (
+            snapshot.layoutChars == chars &&
+            snapshot.layoutLines == lines &&
+            appliedLatin == advance &&
+            snapshot.pages.isNotEmpty()
+        ) {
+            return
+        }
         val generation = ++layoutGeneration
         val opening = snapshot.pages.isEmpty()
         val units = snapshot.units
         val textLength = snapshot.text.length
         viewModelScope.launch {
             val pages = withContext(Dispatchers.Default) {
-                PageComposer.compose(units, chars, lines, textLength)
+                PageComposer.compose(units, chars, lines, textLength, advance)
             }
             if (generation != layoutGeneration || _state.value.status != ReaderStatus.READY) return@launch
             val offset = _state.value.offset
@@ -221,6 +230,7 @@ class ReaderViewModel(
                     offset = reveal.anchorOffset,
                 )
             }
+            appliedLatin = advance
             restartTyping()
             persistOffset()
             startPlaybackLoop()

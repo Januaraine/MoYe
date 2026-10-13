@@ -103,7 +103,7 @@ fun verticalCapacity(
     val innerW = (widthPx - paddingPx * 2f).coerceAtLeast(fontPx)
     val innerH = (heightPx - paddingPx * 2f).coerceAtLeast(fontPx)
     val charAdvance = fontPx * (1f + letterSpacingEm)
-    val columnAdvance = fontPx * lineHeight.coerceAtLeast(1.1f)
+    val columnAdvance = fontPx * lineHeight.coerceAtLeast(1f)
     val chars = (innerH / charAdvance).toInt().coerceAtLeast(1)
     val columns = (innerW / columnAdvance).toInt().coerceAtLeast(1)
     return chars to columns
@@ -220,7 +220,7 @@ fun VerticalPageCanvas(
             typeface = Typeface.SERIF
         }
         val charAdvance = fontSizePx * (1f + letterSpacingEm)
-        val columnAdvance = fontSizePx * lineHeight.coerceAtLeast(1.1f)
+        val columnAdvance = fontSizePx * lineHeight.coerceAtLeast(1f)
         page.columns.forEachIndexed { index, column ->
             val x = size.width - paddingPx - columnAdvance * index - columnAdvance / 2f
             var y = paddingPx + fontSizePx
