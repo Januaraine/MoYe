@@ -12,7 +12,9 @@ class MoYeApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        applyAppLanguage(container.settings.load().languageTag)
+        val settings = container.settings.load()
+        applyAppLanguage(settings.languageTag)
+        LauncherIcons.apply(this, settings.theme)
     }
 }
 

@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.moye.LauncherIcons
 import app.moye.MoYeApplication
 import app.moye.R
 import app.moye.ReaderKeyBridge
@@ -114,6 +115,10 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     var chromeTick by remember { mutableIntStateOf(0) }
     val palette = readerPalette(state.settings.theme)
     val view = LocalView.current
+
+    LaunchedEffect(state.settings.theme) {
+        LauncherIcons.apply(context, state.settings.theme)
+    }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(viewModel, lifecycle) {
