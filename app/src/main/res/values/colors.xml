@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="paper">#F4EFE4</color>
-    <color name="ink">#1C1915</color>
-    <color name="cinnabar">#8C3A3A</color>
-    <color name="icon_background">#F0F0E8</color>
-    <color name="icon_ink">#161616</color>
+    <color name="paper">#FFFFFF</color>
+    <color name="ink">#111111</color>
+    <color name="icon_background">#FFFFFF</color>
+    <color name="icon_ink">#111111</color>
+    <color name="icon_night_background">#111111</color>
+    <color name="icon_night_ink">#FFFFFF</color>
 </resources>

@@ -64,10 +64,13 @@
     <string name="font_size">字体大小</string>
     <string name="letter_spacing">字间距</string>
     <string name="line_spacing">行距</string>
-    <string name="theme">阅读主题</string>
-    <string name="theme_paper">纸色</string>
+    <string name="theme">纸张</string>
+    <string name="theme_paper">灰色</string>
     <string name="theme_light">白色</string>
-    <string name="theme_dark">夜间</string>
+    <string name="theme_dark">黑色</string>
+    <string name="paper_forced_night">首页为夜间时，纸张保持黑色</string>
+    <string name="switch_to_night">切换到夜间</string>
+    <string name="switch_to_day">切换到白天</string>
     <string name="playback_speed">自动播放速度</string>
     <string name="playback_speed_hint">开启逐字显示时，当前句完整出现后再显示下一句。关闭逐字显示时，等待这段时间后翻到下一页。这不是逐字速度。</string>
     <string name="typewriter_speed">文字显示速度</string>

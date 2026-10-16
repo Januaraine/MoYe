@@ -1,14 +1,14 @@
 package app.moye.core.settings
 
-import app.moye.core.model.ReaderTheme
+import app.moye.core.model.Appearance
 
 enum class AppIcon {
     DAY,
     NIGHT,
 }
 
-/** Star icon for paper and light reading; moon icon for night reading. */
-fun appIconFor(theme: ReaderTheme): AppIcon = when (theme) {
-    ReaderTheme.DARK -> AppIcon.NIGHT
-    ReaderTheme.PAPER, ReaderTheme.LIGHT -> AppIcon.DAY
+/** The launcher mark follows the home day/night switch, not the paper color. */
+fun appIconFor(appearance: Appearance): AppIcon = when (appearance) {
+    Appearance.NIGHT -> AppIcon.NIGHT
+    Appearance.DAY -> AppIcon.DAY
 }

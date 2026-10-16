@@ -14,7 +14,7 @@ class MoYeApplication : Application() {
         container = AppContainer(this)
         val settings = container.settings.load()
         applyAppLanguage(settings.languageTag)
-        LauncherIcons.apply(this, settings.theme)
+        LauncherIcons.apply(this, settings.appearance)
     }
 }
 

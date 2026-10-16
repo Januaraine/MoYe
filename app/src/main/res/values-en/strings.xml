@@ -64,10 +64,13 @@
     <string name="font_size">Font size</string>
     <string name="letter_spacing">Letter spacing</string>
     <string name="line_spacing">Line spacing</string>
-    <string name="theme">Theme</string>
-    <string name="theme_paper">Paper</string>
-    <string name="theme_light">Light</string>
-    <string name="theme_dark">Dark</string>
+    <string name="theme">Paper</string>
+    <string name="theme_paper">Gray</string>
+    <string name="theme_light">White</string>
+    <string name="theme_dark">Black</string>
+    <string name="paper_forced_night">Night mode keeps the page black</string>
+    <string name="switch_to_night">Switch to night</string>
+    <string name="switch_to_day">Switch to day</string>
     <string name="playback_speed">Auto-advance speed</string>
     <string name="playback_speed_hint">With the typewriter on, this is the pause after a sentence is fully shown. With it off, this is the pause before the next page. It is not the typewriter speed.</string>
     <string name="typewriter_speed">Text animation speed</string>
