@@ -1,5 +1,6 @@
 package app.moye.core.library
 
+import app.moye.core.model.Appearance
 import app.moye.core.model.BookFormat
 import app.moye.core.model.RemovalChoice
 import app.moye.core.model.RemovalResult
@@ -110,10 +111,12 @@ class LibraryTest {
                 typewriterEnabled = false,
                 typewriterSpeed = 2.5f,
                 languageTag = "en",
+                appearance = Appearance.NIGHT,
             ),
         )
         val loaded = FileSettingsStore(file).load()
         assertEquals(36f, loaded.fontSizeSp)
+        assertEquals(Appearance.NIGHT, loaded.appearance)
         assertEquals(PageTurnDirection.VERTICAL, loaded.pageTurnDirection)
         assertEquals(WritingMode.VERTICAL, loaded.txtWritingMode)
         assertEquals(1.5f, loaded.playbackSpeed)
@@ -134,6 +137,7 @@ class LibraryTest {
         assertTrue(loaded.typewriterEnabled)
         assertEquals(1f, loaded.typewriterSpeed)
         assertEquals("zh", loaded.languageTag)
+        assertEquals(Appearance.DAY, loaded.appearance)
     }
 
     @Test

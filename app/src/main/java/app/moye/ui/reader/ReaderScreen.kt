@@ -77,20 +77,22 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.moye.LauncherIcons
 import app.moye.MoYeApplication
 import app.moye.R
 import app.moye.ReaderKeyBridge
 import app.moye.core.input.ReadingZone
 import app.moye.core.input.ReadingZones
+import app.moye.core.model.Appearance
 import app.moye.core.model.ContentError
 import app.moye.core.model.PageTurnDirection
 import app.moye.core.model.ReaderTheme
 import app.moye.core.model.WritingMode
+import app.moye.core.model.displayedPaperTheme
 import app.moye.core.text.TypewriterTiming
 import app.moye.core.settings.ReaderSettings
 import app.moye.core.text.PlaybackTiming
 import app.moye.core.text.SentenceReveal
+import app.moye.ui.theme.chromePalette
 import app.moye.ui.theme.readerPalette
 
 private enum class ReaderSheet { NONE, SETTINGS, CHAPTERS }
@@ -116,12 +118,10 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
     var sheet by remember { mutableStateOf(ReaderSheet.NONE) }
     var chromeTick by remember { mutableIntStateOf(0) }
-    val palette = readerPalette(state.settings.theme)
+    val night = state.settings.appearance == Appearance.NIGHT
+    val chrome = chromePalette(night)
+    val paper = readerPalette(displayedPaperTheme(state.settings.appearance, state.settings.theme))
     val view = LocalView.current
-
-    LaunchedEffect(state.settings.theme) {
-        LauncherIcons.apply(context, state.settings.theme)
-    }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(viewModel, lifecycle) {
@@ -149,7 +149,10 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     }
     androidx.compose.runtime.SideEffect {
         val window = (view.context as? Activity)?.window ?: return@SideEffect
-        WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = palette.background.luminance() > 0.5f
+        val lightBars = chrome.background.luminance() > 0.5f
+        val controller = WindowCompat.getInsetsController(window, view)
+        controller.isAppearanceLightStatusBars = lightBars
+        controller.isAppearanceLightNavigationBars = lightBars
     }
     BackHandler {
         if (sheet != ReaderSheet.NONE) sheet = ReaderSheet.NONE else onBack()
@@ -160,32 +163,34 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(palette.background)
+            .background(chrome.background)
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
         when (state.status) {
-            ReaderStatus.LOADING -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = palette.accent)
+            ReaderStatus.LOADING -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = chrome.text)
             ReaderStatus.ERROR -> Text(
                 contentErrorText(state.error),
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                color = palette.text,
+                color = chrome.text,
                 textAlign = TextAlign.Center,
             )
-            ReaderStatus.READY -> ReadingBody(
-                state = state,
-                textColor = palette.text,
-                onTap = { fraction ->
-                    when (ReadingZones.fromX(fraction)) {
-                        ReadingZone.CONTROLS -> viewModel.toggleControls()
-                        ReadingZone.PREVIOUS_PAGE -> viewModel.turnPage(forward = false)
-                        ReadingZone.ADVANCE -> if (state.paged) viewModel.turnPage(forward = true) else viewModel.onReadingTap()
-                    }
-                },
-                onTurn = { forward -> viewModel.turnPage(forward) },
-                onLayout = viewModel::bindLayout,
-                onPageBounds = viewModel::onPageBounds,
-            )
+            ReaderStatus.READY -> Box(Modifier.fillMaxSize().background(paper.background)) {
+                ReadingBody(
+                    state = state,
+                    textColor = paper.text,
+                    onTap = { fraction ->
+                        when (ReadingZones.fromX(fraction)) {
+                            ReadingZone.CONTROLS -> viewModel.toggleControls()
+                            ReadingZone.PREVIOUS_PAGE -> viewModel.turnPage(forward = false)
+                            ReadingZone.ADVANCE -> if (state.paged) viewModel.turnPage(forward = true) else viewModel.onReadingTap()
+                        }
+                    },
+                    onTurn = { forward -> viewModel.turnPage(forward) },
+                    onLayout = viewModel::bindLayout,
+                    onPageBounds = viewModel::onPageBounds,
+                )
+            }
         }
         AnimatedVisibility(
             visible = showHeader,
@@ -196,18 +201,18 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .background(palette.background)
+                    .background(chrome.background)
                     .clickable(remember { MutableInteractionSource() }, indication = null) {}
                     .padding(start = 4.dp, end = 4.dp, top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back), tint = palette.text)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back), tint = chrome.text)
                 }
                 Text(
                     state.title,
                     modifier = Modifier.weight(1f),
-                    color = palette.text,
+                    color = chrome.text,
                     fontFamily = FontFamily.Serif,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -218,14 +223,14 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                         chromeTick++
                         sheet = ReaderSheet.CHAPTERS
                     }) {
-                        Text(stringResource(R.string.chapters), color = palette.accent)
+                        Text(stringResource(R.string.chapters), color = chrome.text)
                     }
                 }
                 IconButton(onClick = {
                     chromeTick++
                     sheet = ReaderSheet.SETTINGS
                 }) {
-                    Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.settings), tint = palette.text)
+                    Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.settings), tint = chrome.text)
                 }
             }
         }
@@ -238,7 +243,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(palette.background)
+                    .background(chrome.background)
                     .clickable(remember { MutableInteractionSource() }, indication = null) {},
             ) {
                 val shownPages = if (state.paged) state.pageCount else state.pages.size
@@ -249,19 +254,19 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                         shownPages.coerceAtLeast(1),
                     ),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    color = palette.muted,
+                    color = chrome.muted,
                     textAlign = TextAlign.Center,
                 )
                 Text(
                     stringResource(if (state.paged) R.string.tap_hint_pages else R.string.tap_hint),
                     modifier = Modifier.fillMaxWidth(),
-                    color = palette.muted,
+                    color = chrome.muted,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.labelMedium,
                 )
                 ReaderBottomBar(
                     state = state,
-                    palette = palette,
+                    palette = chrome,
                     onPrevious = {
                         chromeTick++
                         viewModel.turnPage(forward = false)
@@ -283,13 +288,13 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         ModalBottomSheet(
             onDismissRequest = { sheet = ReaderSheet.NONE },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = palette.background,
-            contentColor = palette.text,
+            containerColor = chrome.background,
+            contentColor = chrome.text,
         ) {
             if (sheet == ReaderSheet.SETTINGS) {
-                SettingsSheet(state, palette.text, palette.muted, viewModel::updateSettings)
+                SettingsSheet(state, night, chrome.text, chrome.muted, viewModel::updateSettings)
             } else {
-                ChapterSheet(state, palette.text, palette.muted) { offset ->
+                ChapterSheet(state, chrome.text, chrome.muted) { offset ->
                     viewModel.goToChapter(offset)
                     sheet = ReaderSheet.NONE
                 }
@@ -595,6 +600,7 @@ private fun ReaderBottomBar(
 @Composable
 private fun SettingsSheet(
     state: ReaderUiState,
+    night: Boolean,
     textColor: androidx.compose.ui.graphics.Color,
     muted: androidx.compose.ui.graphics.Color,
     onChange: ((ReaderSettings) -> ReaderSettings) -> Unit,
@@ -609,12 +615,7 @@ private fun SettingsSheet(
     ) {
         Text(stringResource(R.string.settings), color = textColor, style = MaterialTheme.typography.titleLarge, fontFamily = FontFamily.Serif)
         if (state.paged) {
-            Text(stringResource(R.string.theme), color = textColor)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ThemeChip(ReaderTheme.PAPER, R.string.theme_paper, settings.theme, onChange)
-                ThemeChip(ReaderTheme.LIGHT, R.string.theme_light, settings.theme, onChange)
-                ThemeChip(ReaderTheme.DARK, R.string.theme_dark, settings.theme, onChange)
-            }
+            PaperChoices(night, textColor, muted, settings.theme, onChange)
             Text(stringResource(R.string.page_direction), color = textColor)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
@@ -660,12 +661,7 @@ private fun SettingsSheet(
         ) { value ->
             onChange { it.copy(lineHeight = value) }
         }
-        Text(stringResource(R.string.theme), color = textColor)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ThemeChip(ReaderTheme.PAPER, R.string.theme_paper, settings.theme, onChange)
-            ThemeChip(ReaderTheme.LIGHT, R.string.theme_light, settings.theme, onChange)
-            ThemeChip(ReaderTheme.DARK, R.string.theme_dark, settings.theme, onChange)
-        }
+        PaperChoices(night, textColor, muted, settings.theme, onChange)
         SpeedSlider(
             stringResource(R.string.playback_speed),
             settings.playbackSpeed,
@@ -733,6 +729,25 @@ private fun SpeedSlider(
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
         )
         Text(stringResource(R.string.typewriter_fast), color = color, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun PaperChoices(
+    night: Boolean,
+    textColor: Color,
+    muted: Color,
+    selected: ReaderTheme,
+    onChange: ((ReaderSettings) -> ReaderSettings) -> Unit,
+) {
+    Text(stringResource(R.string.theme), color = textColor)
+    if (night) {
+        Text(stringResource(R.string.paper_forced_night), color = muted, style = MaterialTheme.typography.bodySmall)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ThemeChip(ReaderTheme.PAPER, R.string.theme_paper, selected, onChange)
+        ThemeChip(ReaderTheme.LIGHT, R.string.theme_light, selected, onChange)
+        ThemeChip(ReaderTheme.DARK, R.string.theme_dark, selected, onChange)
     }
 }
 

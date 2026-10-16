@@ -1,5 +1,6 @@
 package app.moye.core.settings
 
+import app.moye.core.model.Appearance
 import app.moye.core.model.PageTurnDirection
 import app.moye.core.model.ReaderTheme
 import app.moye.core.model.WritingMode
@@ -16,6 +17,7 @@ data class ReaderSettings(
     val letterSpacingEm: Float = 0.02f,
     val lineHeight: Float = 1.55f,
     val theme: ReaderTheme = ReaderTheme.PAPER,
+    val appearance: Appearance = Appearance.DAY,
     val playbackSpeed: Float = 1f,
     val typewriterEnabled: Boolean = true,
     val typewriterSpeed: Float = 1f,

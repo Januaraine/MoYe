@@ -46,6 +46,16 @@ enum class ReaderTheme {
     DARK,
 }
 
+/** Home-screen day or night. Night forces the launcher icon and the page black. */
+enum class Appearance {
+    DAY,
+    NIGHT,
+}
+
+/** Night mode paints the page black. Day mode keeps the paper the reader chose. */
+fun displayedPaperTheme(appearance: Appearance, paper: ReaderTheme): ReaderTheme =
+    if (appearance == Appearance.NIGHT) ReaderTheme.DARK else paper
+
 enum class ImportError {
     UNSUPPORTED_FORMAT,
     UNREADABLE,
