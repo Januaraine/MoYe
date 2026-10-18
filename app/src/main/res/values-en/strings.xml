@@ -11,7 +11,7 @@
     <string name="search_hint">Search title or author</string>
     <string name="clear_search">Clear search</string>
     <string name="empty_shelf">The shelf is empty</string>
-    <string name="empty_shelf_hint">Import a TXT or EPUB you already have. The copy stays on this device.</string>
+    <string name="empty_shelf_hint">Import a TXT, EPUB, PDF, CBZ, CBR, or AZW file you already have. The copy stays on this device.</string>
     <string name="no_search_results">No matching books</string>
     <string name="shelf_load_failed">Could not read the local shelf</string>
     <string name="retry">Retry</string>
@@ -38,13 +38,14 @@
     <string name="removed_kept">Removed from the shelf. The local copy is still there.</string>
     <string name="removed_deleted">Removed from the shelf and deleted the local copy of this book.</string>
     <string name="remove_failed">Nothing was removed. The local file is unchanged.</string>
-    <string name="import_unsupported">Unsupported format. Choose a TXT or EPUB file.</string>
+    <string name="import_unsupported">Unsupported format. Choose a TXT, EPUB, PDF, CBZ, CBR, AZW, or AZW4 file.</string>
     <string name="import_unreadable">Could not read the selected file.</string>
-    <string name="import_empty">The file has no readable text.</string>
+    <string name="import_empty">The file has no readable content.</string>
     <string name="import_corrupt">The file is damaged or could not be parsed.</string>
     <string name="import_too_large">The file is too large to import.</string>
+    <string name="import_protected">This file is encrypted and cannot be imported.</string>
     <string name="privacy">Privacy</string>
-    <string name="privacy_body">Moye is a local reader. It opens only the TXT or EPUB files you pick in the system file chooser, and stores a copy in the app’s private storage. It does not ask for an account, and it does not upload books or reading history. Import only files you have the right to read.</string>
+    <string name="privacy_body">Moye is a local reader. It opens only the TXT, EPUB, PDF, CBZ, CBR, AZW, or AZW4 files you pick in the system file chooser, and stores a copy in the app’s private storage. It does not ask for an account, and it does not upload books or reading history. Import only files you have the right to read.</string>
     <string name="close">Close</string>
     <string name="language">Language</string>
     <string name="language_zh">中文</string>
@@ -63,10 +64,13 @@
     <string name="font_size">Font size</string>
     <string name="letter_spacing">Letter spacing</string>
     <string name="line_spacing">Line spacing</string>
-    <string name="theme">Theme</string>
-    <string name="theme_paper">Paper</string>
-    <string name="theme_light">Light</string>
-    <string name="theme_dark">Dark</string>
+    <string name="theme">Paper</string>
+    <string name="theme_paper">Gray</string>
+    <string name="theme_light">White</string>
+    <string name="theme_dark">Black</string>
+    <string name="paper_forced_night">Night mode keeps the page black</string>
+    <string name="switch_to_night">Switch to night</string>
+    <string name="switch_to_day">Switch to day</string>
     <string name="playback_speed">Auto-advance speed</string>
     <string name="playback_speed_hint">With the typewriter on, this is the pause after a sentence is fully shown. With it off, this is the pause before the next page. It is not the typewriter speed.</string>
     <string name="typewriter_speed">Text animation speed</string>
@@ -88,4 +92,5 @@
     <string name="next_chapter">Next chapter</string>
     <string name="no_chapters">This book has no chapter list. You can still read it from start to finish.</string>
     <string name="tap_hint">Left: previous page. Right: continue reading. Center: menu. Swipe turns the page.</string>
+    <string name="tap_hint_pages">Left: previous page. Right: next page. Center: menu. Swipe turns the page.</string>
 </resources>

@@ -1,10 +1,13 @@
 package app.moye.ui.reader
 
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.moye.core.model.Chapter
 import app.moye.core.model.ContentError
+import app.moye.core.model.Delivery
 import app.moye.core.model.ReaderCommand
 import app.moye.core.model.ReadingUnit
 import app.moye.core.model.WritingMode
@@ -65,6 +68,10 @@ data class ReaderUiState(
     val offset: Int = 0,
     val playing: Boolean = false,
     val controlsVisible: Boolean = false,
+    val paged: Boolean = false,
+    val pageCount: Int = 0,
+    val pageImage: ImageBitmap? = null,
+    val pageFailed: Boolean = false,
 )
 
 class ReaderViewModel(
@@ -84,6 +91,9 @@ class ReaderViewModel(
     private val autoPlaySchedule = AutoPlayScheduler()
     private var typeGeneration = 0
     private var layoutGeneration = 0
+    private var pageGeneration = 0
+    private var boundWidth = 0
+    private var boundHeight = 0
 
     private val _state = MutableStateFlow(ReaderUiState(settings = settingsStore.load()))
     val state: StateFlow<ReaderUiState> = _state.asStateFlow()
@@ -96,6 +106,30 @@ class ReaderViewModel(
                     it.copy(status = ReaderStatus.ERROR, error = loaded.error)
                 }
                 is ContentLoad.Ready -> {
+                    if (loaded.book.delivery == Delivery.PAGES) {
+                        val settings = settingsStore.load()
+                        val count = loaded.book.pageCount.coerceAtLeast(0)
+                        val index = loaded.record.charOffset
+                            .coerceIn(0, (count - 1).coerceAtLeast(0).toLong())
+                            .toInt()
+                        _state.update {
+                            it.copy(
+                                status = ReaderStatus.READY,
+                                title = loaded.record.title,
+                                settings = settings,
+                                paged = true,
+                                pageCount = count,
+                                pageIndex = index,
+                                offset = index,
+                                text = "",
+                                units = emptyList(),
+                                chapters = emptyList(),
+                                pages = emptyList(),
+                            )
+                        }
+                        syncTimer()
+                        return@launch
+                    }
                     val settings = settingsStore.load()
                     val text = loaded.book.text
                     _state.update {
@@ -182,7 +216,7 @@ class ReaderViewModel(
 
     fun bindLayout(charsPerLine: Int, linesPerPage: Int, latinAdvance: Float = 0.5f) {
         val snapshot = _state.value
-        if (snapshot.status != ReaderStatus.READY) return
+        if (snapshot.paged || snapshot.status != ReaderStatus.READY) return
         val chars = charsPerLine.coerceAtLeast(1)
         val lines = linesPerPage.coerceAtLeast(1)
         val advance = latinAdvance.coerceIn(0.2f, 1f)
@@ -236,9 +270,24 @@ class ReaderViewModel(
         }
     }
 
+    fun onPageBounds(widthPx: Int, heightPx: Int) {
+        val snapshot = _state.value
+        if (!snapshot.paged || snapshot.status != ReaderStatus.READY) return
+        val width = widthPx.coerceIn(1, 2048)
+        val height = heightPx.coerceIn(1, 2048)
+        if (width == boundWidth && height == boundHeight && snapshot.pageImage != null) return
+        boundWidth = width
+        boundHeight = height
+        showPage(snapshot.pageIndex, width, height)
+    }
+
     fun onReadingTap() {
         val snapshot = _state.value
         if (snapshot.status != ReaderStatus.READY) return
+        if (snapshot.paged) {
+            turnPage(forward = true)
+            return
+        }
         val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: return
         when (val step = SentenceReveal.onTap(page, snapshot.toReveal(), snapshot.settings.typewriterEnabled)) {
             is RevealStep.Updated -> {
@@ -269,6 +318,7 @@ class ReaderViewModel(
     }
 
     fun togglePlayback() {
+        if (_state.value.paged) return
         if (autoPlay.armed) pausePlayback() else startPlayback()
     }
 
@@ -426,6 +476,17 @@ class ReaderViewModel(
 
     private fun movePage(forward: Boolean): Boolean {
         val snapshot = _state.value
+        if (snapshot.paged) {
+            if (snapshot.status != ReaderStatus.READY || snapshot.pageCount <= 0) return false
+            val target = snapshot.pageIndex + if (forward) 1 else -1
+            if (target !in 0 until snapshot.pageCount) return false
+            _state.update {
+                it.copy(pageIndex = target, offset = target, pageImage = null, pageFailed = false)
+            }
+            persistOffset()
+            if (boundWidth > 0 && boundHeight > 0) showPage(target, boundWidth, boundHeight)
+            return true
+        }
         if (snapshot.status != ReaderStatus.READY || snapshot.pages.isEmpty()) return false
         val target = snapshot.pageIndex + if (forward) 1 else -1
         if (target !in snapshot.pages.indices) return false
@@ -464,6 +525,23 @@ class ReaderViewModel(
                     }
                 }
                 if (!next.typing) break
+            }
+        }
+    }
+
+    private fun showPage(index: Int, width: Int, height: Int) {
+        val generation = ++pageGeneration
+        viewModelScope.launch {
+            val bitmap = withContext(Dispatchers.IO) {
+                repository.renderPage(bookId, index, width, height)
+            }
+            if (generation != pageGeneration) {
+                bitmap?.recycle()
+                return@launch
+            }
+            val image = bitmap?.asImageBitmap()
+            _state.update { state ->
+                if (state.pageIndex != index) state else state.copy(pageImage = image, pageFailed = image == null)
             }
         }
     }
@@ -513,7 +591,9 @@ class ReaderViewModel(
             if (snapshot.status != ReaderStatus.READY) return@withLock
             withContext(Dispatchers.IO) {
                 if (delta > 0L) repository.addReadingTime(bookId, delta)
-                repository.updateProgress(bookId, snapshot.offset.toLong(), snapshot.text.length.toLong())
+                val position = if (snapshot.paged) snapshot.pageIndex.toLong() else snapshot.offset.toLong()
+                val total = if (snapshot.paged) snapshot.pageCount.toLong() else snapshot.text.length.toLong()
+                repository.updateProgress(bookId, position, total)
             }
         }
     }

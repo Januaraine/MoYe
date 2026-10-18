@@ -23,8 +23,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -56,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -71,13 +72,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.moye.LauncherIcons
 import app.moye.MoYeApplication
 import app.moye.ObserveResume
 import app.moye.R
 import app.moye.applyAppLanguage
 import app.moye.core.library.BookRecord
 import app.moye.core.library.filterBooks
-import app.moye.core.model.BookFormat
+import app.moye.core.model.Appearance
 import app.moye.core.model.ImportError
 import app.moye.data.ImportReport
 import app.moye.core.model.RemovalChoice
@@ -86,7 +88,7 @@ import app.moye.core.time.DurationParts
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ShelfScreen(onOpenBook: (String) -> Unit) {
+fun ShelfScreen(onOpenBook: (String) -> Unit, onAppearanceChanged: (Appearance) -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as MoYeApplication).container
     val viewModel: ShelfViewModel = viewModel(factory = ShelfViewModelFactory(container.repository, container.settings))
@@ -151,6 +153,19 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
                     }
                 },
                 actions = {
+                    val night = state.appearance == Appearance.NIGHT
+                    IconButton(onClick = {
+                        val next = viewModel.toggleAppearance()
+                        LauncherIcons.apply(context, next)
+                        onAppearanceChanged(next)
+                    }) {
+                        Icon(
+                            if (night) Icons.Outlined.DarkMode else Icons.Outlined.WbSunny,
+                            contentDescription = stringResource(
+                                if (night) R.string.switch_to_day else R.string.switch_to_night,
+                            ),
+                        )
+                    }
                     TextButton(onClick = {
                         val next = if (state.languageTag == "en") "zh" else "en"
                         viewModel.setLanguage(next)
@@ -230,7 +245,7 @@ fun ShelfScreen(onOpenBook: (String) -> Unit) {
                             items(visible, key = { it.id }) { book ->
                                 BookCard(
                                     book = book,
-                                    coverFile = if (book.format == BookFormat.EPUB) container.repository.coverFile(book) else null,
+                                    coverFile = container.repository.coverFile(book),
                                     coverRevision = state.coverRevision,
                                     onOpen = { onOpenBook(book.id) },
                                     onEdit = { viewModel.beginEdit(book) },
@@ -427,7 +442,7 @@ private fun BookCoverArt(title: String, file: File?, revision: Int, modifier: Mo
         if (decoded == null) failed = true else bitmap = decoded
     }
     val shape = RoundedCornerShape(4.dp)
-    val framed = modifier.clip(shape).border(1.dp, Color(0xFFC9C0B2), shape)
+    val framed = modifier.clip(shape).border(1.dp, MaterialTheme.colorScheme.outline, shape)
     val image = bitmap
     when {
         image != null -> Image(
@@ -436,15 +451,17 @@ private fun BookCoverArt(title: String, file: File?, revision: Int, modifier: Mo
             modifier = framed,
             contentScale = ContentScale.Crop,
         )
-        file != null && !failed -> Box(framed.background(Color(0xFF241C16)))
+        file != null && !failed -> Box(framed.background(MaterialTheme.colorScheme.surfaceVariant))
         else -> GeneratedTitleCover(title, framed)
     }
 }
 
 @Composable
 private fun GeneratedTitleCover(title: String, modifier: Modifier = Modifier) {
+    val cover = MaterialTheme.colorScheme.onBackground
+    val ink = MaterialTheme.colorScheme.background
     Box(
-        modifier.background(Color(0xFF241C16)).padding(horizontal = 8.dp, vertical = 12.dp),
+        modifier.background(cover).padding(horizontal = 8.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -452,14 +469,14 @@ private fun GeneratedTitleCover(title: String, modifier: Modifier = Modifier) {
                 Modifier
                     .width(28.dp)
                     .height(2.dp)
-                    .background(Color(0xFF8C3A3A)),
+                    .background(MaterialTheme.colorScheme.outline),
             )
             Spacer(Modifier.height(10.dp))
             val label = title.ifBlank { stringResource(R.string.app_name) }
             val compact = label.length > 8
             Text(
                 label,
-                color = Color(0xFFF4EFE4),
+                color = ink,
                 fontFamily = FontFamily.Serif,
                 fontSize = if (compact) 13.sp else 20.sp,
                 lineHeight = if (compact) 17.sp else 24.sp,
@@ -509,6 +526,7 @@ private fun importErrorText(error: ImportError): String = when (error) {
     ImportError.EMPTY -> stringResource(R.string.import_empty)
     ImportError.CORRUPT -> stringResource(R.string.import_corrupt)
     ImportError.TOO_LARGE -> stringResource(R.string.import_too_large)
+    ImportError.PROTECTED -> stringResource(R.string.import_protected)
 }
 
 @Composable

@@ -10,15 +10,19 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import android.graphics.Color
 import app.moye.core.input.KeyMapper
+import app.moye.core.model.Appearance
 import app.moye.core.model.ReaderCommand
 import app.moye.ui.reader.ReaderScreen
 import app.moye.ui.shelf.ShelfScreen
 import app.moye.ui.theme.MoYeTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 
 object ReaderKeyBridge {
     var handler: ((ReaderCommand) -> Boolean)? = null
@@ -28,10 +32,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val night = (application as MoYeApplication).container.settings.load().appearance == Appearance.NIGHT
+        window.decorView.setBackgroundColor(if (night) Color.parseColor("#111111") else Color.WHITE)
         setContent {
-            MoYeTheme {
-                MoYeApp()
-            }
+            MoYeApp()
         }
     }
 
@@ -53,12 +57,20 @@ class MainActivity : AppCompatActivity() {
 
 @Composable
 private fun MoYeApp() {
+    val context = LocalContext.current
+    val settings = (context.applicationContext as MoYeApplication).container.settings
+    var night by remember { mutableStateOf(settings.load().appearance == Appearance.NIGHT) }
     var openBookId by rememberSaveable { mutableStateOf<String?>(null) }
-    val bookId = openBookId
-    if (bookId == null) {
-        ShelfScreen(onOpenBook = { openBookId = it })
-    } else {
-        ReaderScreen(bookId = bookId, onBack = { openBookId = null })
+    MoYeTheme(night = night) {
+        val bookId = openBookId
+        if (bookId == null) {
+            ShelfScreen(
+                onOpenBook = { openBookId = it },
+                onAppearanceChanged = { night = it == Appearance.NIGHT },
+            )
+        } else {
+            ReaderScreen(bookId = bookId, onBack = { openBookId = null })
+        }
     }
 }
 

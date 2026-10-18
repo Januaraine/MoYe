@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.moye.core.library.BookRecord
+import app.moye.core.model.Appearance
 import app.moye.core.model.ImportError
 import app.moye.core.model.RemovalChoice
 import app.moye.core.model.RemovalResult
@@ -39,6 +40,7 @@ data class ShelfUiState(
     val notice: ShelfNotice? = null,
     val showPrivacy: Boolean = false,
     val languageTag: String = "",
+    val appearance: Appearance = Appearance.DAY,
     val coverRevision: Int = 0,
 )
 
@@ -54,7 +56,8 @@ class ShelfViewModel(
     }
 
     fun refresh() {
-        _state.update { it.copy(languageTag = settingsStore.load().languageTag) }
+        val settings = settingsStore.load()
+        _state.update { it.copy(languageTag = settings.languageTag, appearance = settings.appearance) }
         when (val snapshot = repository.loadShelf()) {
             is ShelfSnapshot.Ready -> _state.update {
                 it.copy(loading = false, loadFailed = false, books = snapshot.books)
@@ -155,6 +158,16 @@ class ShelfViewModel(
     fun setLanguage(tag: String) {
         settingsStore.update { it.copy(languageTag = tag) }
         _state.update { it.copy(languageTag = tag) }
+    }
+
+    fun toggleAppearance(): Appearance {
+        val next = settingsStore.update { current ->
+            current.copy(
+                appearance = if (current.appearance == Appearance.NIGHT) Appearance.DAY else Appearance.NIGHT,
+            )
+        }.appearance
+        _state.update { it.copy(appearance = next) }
+        return next
     }
 }
 

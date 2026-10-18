@@ -3,6 +3,31 @@ package app.moye.core.model
 enum class BookFormat {
     TXT,
     EPUB,
+    PDF,
+    CBZ,
+    CBR,
+    AZW,
+    AZW4,
+}
+
+enum class Delivery {
+    TEXT,
+    PAGES,
+}
+
+fun BookFormat.storageExtension(): String = when (this) {
+    BookFormat.TXT -> "txt"
+    BookFormat.EPUB -> "epub"
+    BookFormat.PDF -> "pdf"
+    BookFormat.CBZ -> "cbz"
+    BookFormat.CBR -> "cbr"
+    BookFormat.AZW -> "azw"
+    BookFormat.AZW4 -> "azw4"
+}
+
+fun BookFormat.isPaged(): Boolean = when (this) {
+    BookFormat.PDF, BookFormat.CBZ, BookFormat.CBR, BookFormat.AZW4 -> true
+    BookFormat.TXT, BookFormat.EPUB, BookFormat.AZW -> false
 }
 
 enum class WritingMode {
@@ -21,12 +46,23 @@ enum class ReaderTheme {
     DARK,
 }
 
+/** Home-screen day or night. Night forces the launcher icon and the page black. */
+enum class Appearance {
+    DAY,
+    NIGHT,
+}
+
+/** Night mode paints the page black. Day mode keeps the paper the reader chose. */
+fun displayedPaperTheme(appearance: Appearance, paper: ReaderTheme): ReaderTheme =
+    if (appearance == Appearance.NIGHT) ReaderTheme.DARK else paper
+
 enum class ImportError {
     UNSUPPORTED_FORMAT,
     UNREADABLE,
     EMPTY,
     CORRUPT,
     TOO_LARGE,
+    PROTECTED,
 }
 
 enum class ContentError {
@@ -47,6 +83,8 @@ data class ParsedBook(
     val chapters: List<Chapter>,
     val declaredWritingMode: WritingMode?,
     val cover: EmbeddedCover? = null,
+    val delivery: Delivery = Delivery.TEXT,
+    val pageCount: Int = 0,
 )
 
 class EmbeddedCover(

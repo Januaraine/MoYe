@@ -5,7 +5,7 @@ import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContracts
 
 /**
- * Multi-file TXT/EPUB picker.
+ * Multi-file book picker.
  *
  * OpenMultipleDocuments sets EXTRA_ALLOW_MULTIPLE, but a wildcard-only mime
  * list makes the emulator DocumentsUI open a single-file picker. Concrete
@@ -29,6 +29,15 @@ class OpenMultipleBooks : ActivityResultContracts.OpenMultipleDocuments() {
         val MIME_TYPES: Array<String> = arrayOf(
             "text/plain",
             "application/epub+zip",
+            "application/pdf",
+            "application/vnd.comicbook+zip",
+            "application/x-cbz",
+            "application/vnd.comicbook-rar",
+            "application/x-cbr",
+            "application/vnd.rar",
+            "application/x-rar-compressed",
+            "application/vnd.amazon.ebook",
+            "application/x-mobipocket-ebook",
             "application/zip",
             "application/octet-stream",
         )

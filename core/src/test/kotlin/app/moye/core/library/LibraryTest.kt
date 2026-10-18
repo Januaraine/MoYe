@@ -1,5 +1,6 @@
 package app.moye.core.library
 
+import app.moye.core.model.Appearance
 import app.moye.core.model.BookFormat
 import app.moye.core.model.RemovalChoice
 import app.moye.core.model.RemovalResult
@@ -110,10 +111,12 @@ class LibraryTest {
                 typewriterEnabled = false,
                 typewriterSpeed = 2.5f,
                 languageTag = "en",
+                appearance = Appearance.NIGHT,
             ),
         )
         val loaded = FileSettingsStore(file).load()
         assertEquals(36f, loaded.fontSizeSp)
+        assertEquals(Appearance.NIGHT, loaded.appearance)
         assertEquals(PageTurnDirection.VERTICAL, loaded.pageTurnDirection)
         assertEquals(WritingMode.VERTICAL, loaded.txtWritingMode)
         assertEquals(1.5f, loaded.playbackSpeed)
@@ -134,6 +137,7 @@ class LibraryTest {
         assertTrue(loaded.typewriterEnabled)
         assertEquals(1f, loaded.typewriterSpeed)
         assertEquals("zh", loaded.languageTag)
+        assertEquals(Appearance.DAY, loaded.appearance)
     }
 
     @Test
@@ -192,6 +196,81 @@ class LibraryTest {
     }
 
     @Test
+    fun readsLegacyTxtAndEpubShelf() {
+        val file = shelfFile("moye-legacy")
+        file.writeText(
+            """
+            {"books":[
+              {"id":"txt","title":"Notes","format":"TXT","relativePath":"txt/book.txt","importedAtEpochMs":1},
+              {"id":"epub","title":"Novel","author":"A","format":"EPUB","relativePath":"epub/book.epub","charOffset":4,"totalChars":20,"importedAtEpochMs":2}
+            ]}
+            """.trimIndent(),
+        )
+        val books = FileLibraryStore(file).load()
+        assertEquals(listOf("txt", "epub"), books.map { it.id })
+        assertEquals(BookFormat.TXT, books[0].format)
+        assertEquals(BookFormat.EPUB, books[1].format)
+        assertEquals(4, books[1].charOffset)
+    }
+
+    @Test
+    fun readsShelvesThatIncludeNewerFormats() {
+        val file = shelfFile("moye-new-formats")
+        file.writeText(
+            """
+            {"books":[
+              {"id":"txt","title":"Notes","format":"TXT","relativePath":"txt/book.txt"},
+              {"id":"pdf","title":"Scan","format":"PDF","relativePath":"pdf/book.pdf"},
+              {"id":"cbz","title":"Comic","format":"CBZ","relativePath":"cbz/book.cbz"},
+              {"id":"cbr","title":"Rare","format":"CBR","relativePath":"cbr/book.cbr"},
+              {"id":"azw","title":"Kindle","format":"AZW","relativePath":"azw/book.azw"},
+              {"id":"azw4","title":"Print","format":"AZW4","relativePath":"azw4/book.azw4"}
+            ]}
+            """.trimIndent(),
+        )
+        val books = FileLibraryStore(file).load()
+        assertEquals(
+            listOf(BookFormat.TXT, BookFormat.PDF, BookFormat.CBZ, BookFormat.CBR, BookFormat.AZW, BookFormat.AZW4),
+            books.map { it.format },
+        )
+    }
+
+    @Test
+    fun unknownRecordDoesNotHideTheRestOrRewriteTheFile() {
+        val file = shelfFile("moye-unknown")
+        val original = """
+            {"books":[
+              {"id":"keep","title":"Notes","format":"TXT","relativePath":"keep/book.txt","importedAtEpochMs":1},
+              {"id":"odd","title":"Future","format":"NOPE","relativePath":"odd/book.bin","importedAtEpochMs":2},
+              {"id":"broken"}
+            ]}
+        """.trimIndent()
+        file.writeText(original)
+        val store = FileLibraryStore(file)
+        val books = store.load()
+        assertEquals(listOf("keep"), books.map { it.id })
+        assertEquals(original, file.readText())
+
+        Library(store).add(sample("added", "Added"))
+        val saved = file.readText()
+        assertTrue(saved.contains("NOPE"))
+        assertTrue(saved.contains("Future"))
+        assertTrue(saved.contains("broken"))
+        assertEquals(listOf("added", "keep"), Library(FileLibraryStore(file)).list().map { it.id }.sorted())
+    }
+
+    @Test
+    fun corruptShelfFileIsLeftUntouched() {
+        val file = shelfFile("moye-corrupt")
+        file.writeText("this is not a shelf")
+        val before = file.readBytes()
+        val store = FileLibraryStore(file)
+        assertTrue(runCatching { store.load() }.isFailure)
+        assertTrue(runCatching { store.save(emptyList()) }.isFailure)
+        assertTrue(before.contentEquals(file.readBytes()))
+    }
+
+    @Test
     fun rejectsPathsOutsideTheBookDirectory() {
         val root = Files.createTempDirectory("moye-files").toFile()
         val files = BookFiles(root)
@@ -199,6 +278,11 @@ class LibraryTest {
         val relative = files.place("id", "txt", source)
         assertTrue(files.resolve(relative).readText() == "x")
         assertTrue(runCatching { files.resolve("../secret.txt") }.isFailure)
+    }
+
+    private fun shelfFile(prefix: String): File {
+        val dir = Files.createTempDirectory(prefix).toFile()
+        return File(dir, "library.json")
     }
 
     private fun sample(
