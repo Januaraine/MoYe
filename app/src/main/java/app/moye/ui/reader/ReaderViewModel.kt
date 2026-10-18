@@ -90,6 +90,8 @@ class ReaderViewModel(
     private var autoPlay = AutoPlayGate()
     private val autoPlaySchedule = AutoPlayScheduler()
     private var typeGeneration = 0
+    private var pageEpoch = 0
+    private var furthestReachedOffset = -1
     private var layoutGeneration = 0
     private var pageGeneration = 0
     private var boundWidth = 0
@@ -237,20 +239,27 @@ class ReaderViewModel(
                 PageComposer.compose(units, chars, lines, textLength, advance)
             }
             if (generation != layoutGeneration || _state.value.status != ReaderStatus.READY) return@launch
-            val offset = _state.value.offset
+            val latest = _state.value
+            val offset = latest.offset
+            furthestReachedOffset = furthestReachedOffset.coerceAtLeast(offset)
             val index = SentenceReveal.pageIndexForOffset(pages, offset).coerceIn(0, pages.lastIndex)
-            val restored = SentenceReveal.restore(pages[index], offset, _state.value.settings.typewriterEnabled)
-            val sentence = pages[index].sentences.getOrNull(restored.revealedCount - 1)
-            val typeFirstSentence = opening &&
+            val page = pages[index]
+            val restored = SentenceReveal.restore(page, offset, latest.settings.typewriterEnabled)
+            val sentence = page.sentences.getOrNull(restored.revealedCount - 1)
+            val previous = latest.pages.getOrNull(latest.pageIndex)
+            val keepFull = previous != null && latest.isFullyRevealed() && latest.offset <= previous.start
+            val typeFirstSentence = !keepFull &&
+                opening &&
                 restored.revealedCount <= 1 &&
-                _state.value.settings.typewriterEnabled &&
+                latest.settings.typewriterEnabled &&
                 sentence != null &&
                 sentence.text.isNotEmpty()
-            val reveal = if (typeFirstSentence) {
-                SentenceReveal.enter(pages[index], true)
-            } else {
-                restored.copy(typing = false)
+            val reveal = when {
+                keepFull -> SentenceReveal.revisit(page)
+                typeFirstSentence -> SentenceReveal.enter(page, true)
+                else -> restored.copy(typing = false)
             }
+            pageEpoch++
             _state.update {
                 it.copy(
                     pages = pages,
@@ -289,12 +298,55 @@ class ReaderViewModel(
             return
         }
         val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: return
-        when (val step = SentenceReveal.onTap(page, snapshot.toReveal(), snapshot.settings.typewriterEnabled)) {
+        when (val step = SentenceReveal.onTap(page, snapshot.toReveal(), snapshot.settings.typewriterEnabled, furthestReachedOffset)) {
             is RevealStep.Updated -> {
+                coverCurrentSentence(page, snapshot.toReveal())
+                pageEpoch++
                 applyReveal(step.reveal)
                 interruptAutoPlay()
             }
-            RevealStep.NextPage -> turnPage(forward = true)
+            RevealStep.NextPage -> {
+                val target = snapshot.pageIndex + 1
+                if (target !in snapshot.pages.indices) {
+                    interruptAutoPlay()
+                    return
+                }
+                coverCurrentSentence(page, snapshot.toReveal())
+                openFirstSentence(target)
+                interruptAutoPlay()
+            }
+            RevealStep.PreviousPage -> interruptAutoPlay()
+        }
+    }
+
+    fun onPreviousSentence() {
+        val snapshot = _state.value
+        if (snapshot.status != ReaderStatus.READY) return
+        if (snapshot.paged) {
+            turnPage(forward = false)
+            return
+        }
+        val page = snapshot.pages.getOrNull(snapshot.pageIndex) ?: return
+        when (val step = SentenceReveal.onPrevious(page, snapshot.toReveal())) {
+            is RevealStep.Updated -> {
+                coverCurrentSentence(page, snapshot.toReveal())
+                pageEpoch++
+                applyReveal(step.reveal, allowRetreat = true)
+                interruptAutoPlay()
+            }
+            RevealStep.PreviousPage -> {
+                val target = snapshot.pageIndex - 1
+                if (target !in snapshot.pages.indices) {
+                    interruptAutoPlay()
+                    return
+                }
+                coverCurrentSentence(page, snapshot.toReveal())
+                val destination = snapshot.pages[target]
+                val last = (destination.sentences.size - 1).coerceAtLeast(0)
+                publishReveal(target, SentenceReveal.showSentence(destination, last, immediate = true))
+                interruptAutoPlay()
+            }
+            RevealStep.NextPage -> interruptAutoPlay()
         }
     }
 
@@ -325,6 +377,7 @@ class ReaderViewModel(
     fun seek(offset: Int) {
         val snapshot = _state.value
         val clamped = offset.coerceIn(0, snapshot.text.length)
+        furthestReachedOffset = furthestReachedOffset.coerceAtLeast(clamped)
         val pages = snapshot.pages
         if (pages.isEmpty()) {
             _state.update { it.copy(offset = clamped, typing = false) }
@@ -436,6 +489,7 @@ class ReaderViewModel(
 
     private fun advanceOneSentence(): Boolean {
         if (!autoPlay.isCurrent(autoPlay.token)) return false
+        val epoch = pageEpoch
         val snapshot = _state.value
         val page = snapshot.pages.getOrNull(snapshot.pageIndex)
         if (snapshot.status != ReaderStatus.READY || page == null) {
@@ -444,6 +498,7 @@ class ReaderViewModel(
         }
         when (val step = SentenceReveal.onAutoPlay(page, snapshot.toReveal(), snapshot.settings.typewriterEnabled)) {
             is RevealStep.Updated -> {
+                if (epoch != pageEpoch || _state.value.pageIndex != snapshot.pageIndex) return true
                 val sameSentence = step.reveal.revealedCount == snapshot.revealedCount &&
                     step.reveal.anchorOffset == snapshot.offset
                 if (sameSentence) return true
@@ -451,12 +506,14 @@ class ReaderViewModel(
                 return true
             }
             RevealStep.NextPage -> {
+                if (epoch != pageEpoch || _state.value.pageIndex != snapshot.pageIndex) return true
                 if (!movePage(forward = true)) {
                     disarmPlayback()
                     return false
                 }
                 return true
             }
+            RevealStep.PreviousPage -> return true
         }
     }
 
@@ -490,12 +547,16 @@ class ReaderViewModel(
         if (snapshot.status != ReaderStatus.READY || snapshot.pages.isEmpty()) return false
         val target = snapshot.pageIndex + if (forward) 1 else -1
         if (target !in snapshot.pages.indices) return false
-        enterPage(target)
+        val leaving = snapshot.pages[snapshot.pageIndex]
+        furthestReachedOffset = furthestReachedOffset.coerceAtLeast(SentenceReveal.coveredOffset(leaving))
+        val targetPage = snapshot.pages[target]
+        enterPage(target, SentenceReveal.opensInFull(forward, targetPage.start, furthestReachedOffset))
         return true
     }
 
     private fun restartTyping() {
         val generation = ++typeGeneration
+        val epoch = pageEpoch
         typeJob?.cancel()
         val snapshot = _state.value
         if (!snapshot.typing || !snapshot.settings.typewriterEnabled) return
@@ -503,21 +564,30 @@ class ReaderViewModel(
         val pageIndex = snapshot.pageIndex
         val revealedCount = snapshot.revealedCount
         typeJob = viewModelScope.launch {
-            while (isActive && generation == typeGeneration) {
+            while (isActive && generation == typeGeneration && epoch == pageEpoch) {
                 delay(delayMs)
-                if (generation != typeGeneration) break
+                if (generation != typeGeneration || epoch != pageEpoch) break
                 val current = _state.value
-                if (!current.typing || current.pageIndex != pageIndex || current.revealedCount != revealedCount) break
+                if (
+                    !current.typing ||
+                    current.pageIndex != pageIndex ||
+                    current.revealedCount != revealedCount ||
+                    current.isFullyRevealed()
+                ) {
+                    break
+                }
                 val page = current.pages.getOrNull(current.pageIndex) ?: break
                 val next = SentenceReveal.tick(page, current.toReveal())
-                if (generation != typeGeneration) break
+                if (generation != typeGeneration || epoch != pageEpoch) break
                 _state.update { state ->
                     if (
                         generation != typeGeneration ||
+                        epoch != pageEpoch ||
                         state.pageIndex != pageIndex ||
                         state.revealedCount != revealedCount ||
                         !state.typing ||
-                        !state.settings.typewriterEnabled
+                        !state.settings.typewriterEnabled ||
+                        state.isFullyRevealed()
                     ) {
                         state
                     } else {
@@ -546,12 +616,35 @@ class ReaderViewModel(
         }
     }
 
-    private fun enterPage(index: Int) {
+    private fun enterPage(index: Int, openInFull: Boolean) {
         val page = _state.value.pages[index]
-        val reveal = SentenceReveal.enter(page, _state.value.settings.typewriterEnabled)
+        val reveal = if (openInFull) {
+            SentenceReveal.revisit(page)
+        } else {
+            SentenceReveal.enter(page, _state.value.settings.typewriterEnabled)
+        }
+        publishReveal(index, reveal)
+    }
+
+    private fun openFirstSentence(index: Int): Boolean {
+        val page = _state.value.pages.getOrNull(index) ?: return false
+        val first = page.sentences.firstOrNull()
+        val seen = first != null && first.startOffset <= furthestReachedOffset
+        val reveal = when {
+            first == null -> SentenceReveal.enter(page, false)
+            seen || !_state.value.settings.typewriterEnabled -> SentenceReveal.showSentence(page, 0, immediate = true)
+            else -> SentenceReveal.enter(page, true)
+        }
+        publishReveal(index, reveal)
+        return true
+    }
+
+    private fun publishReveal(pageIndex: Int, reveal: PageReveal) {
+        pageEpoch++
+        _state.value.pages.getOrNull(pageIndex)?.let { noteReveal(it, reveal) }
         _state.update {
             it.copy(
-                pageIndex = index,
+                pageIndex = pageIndex,
                 revealedCount = reveal.revealedCount,
                 typedChars = reveal.typedChars,
                 typing = reveal.typing,
@@ -562,17 +655,50 @@ class ReaderViewModel(
         restartTyping()
     }
 
-    private fun applyReveal(reveal: PageReveal) {
-        _state.update {
-            it.copy(
-                revealedCount = reveal.revealedCount,
-                typedChars = reveal.typedChars,
-                typing = reveal.typing,
-                offset = reveal.anchorOffset,
-            )
+    private fun applyReveal(reveal: PageReveal, allowRetreat: Boolean = false) {
+        val epoch = pageEpoch
+        val pageIndex = _state.value.pageIndex
+        if (epoch != pageEpoch) return
+        if (!allowRetreat && _state.value.wouldHideFullPage(reveal)) return
+        val page = _state.value.pages.getOrNull(pageIndex)
+        _state.update { state ->
+            if (epoch != pageEpoch || state.pageIndex != pageIndex) {
+                state
+            } else if (!allowRetreat && state.wouldHideFullPage(reveal)) {
+                state
+            } else {
+                state.copy(
+                    revealedCount = reveal.revealedCount,
+                    typedChars = reveal.typedChars,
+                    typing = reveal.typing,
+                    offset = reveal.anchorOffset,
+                )
+            }
         }
+        if (epoch != pageEpoch || _state.value.pageIndex != pageIndex) return
+        if (!allowRetreat && _state.value.wouldHideFullPage(reveal)) return
+        if (page != null) noteReveal(page, reveal)
         persistOffset()
         restartTyping()
+    }
+
+    private fun coverCurrentSentence(page: ReadingPage, reveal: PageReveal) {
+        if (reveal.revealedCount <= 0) return
+        val sentence = page.sentences.getOrNull(reveal.revealedCount - 1) ?: return
+        furthestReachedOffset = furthestReachedOffset.coerceAtLeast(
+            (sentence.endOffset - 1).coerceAtLeast(sentence.startOffset),
+        )
+    }
+
+    private fun noteReveal(page: ReadingPage, reveal: PageReveal) {
+        if (reveal.revealedCount <= 0) return
+        val sentence = page.sentences.getOrNull(reveal.revealedCount - 1) ?: return
+        val covered = if (!reveal.typing && reveal.typedChars >= sentence.text.length) {
+            (sentence.endOffset - 1).coerceAtLeast(sentence.startOffset)
+        } else {
+            sentence.startOffset
+        }
+        furthestReachedOffset = furthestReachedOffset.coerceAtLeast(covered)
     }
 
     private fun syncTimer() {
@@ -618,6 +744,17 @@ private fun ReaderUiState.toReveal(): PageReveal {
         typing = typing,
         anchorOffset = offset,
     )
+}
+
+private fun ReaderUiState.isFullyRevealed(): Boolean {
+    val page = pages.getOrNull(pageIndex) ?: return false
+    val last = page.sentences.lastOrNull() ?: return false
+    return revealedCount >= page.sentences.size && !typing && typedChars >= last.text.length
+}
+
+private fun ReaderUiState.wouldHideFullPage(reveal: PageReveal): Boolean {
+    if (!isFullyRevealed()) return false
+    return reveal.typing || reveal.revealedCount < revealedCount || reveal.typedChars < typedChars
 }
 
 class ReaderViewModelFactory(

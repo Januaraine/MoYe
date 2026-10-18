@@ -11,13 +11,15 @@ sealed class RevealStep {
     data class Updated(val reveal: PageReveal) : RevealStep()
 
     data object NextPage : RevealStep()
+
+    data object PreviousPage : RevealStep()
 }
 
 /**
- * With the typewriter on, a page reveals one sentence at a time and a tap
- * finishes the current sentence before the next one appears.
- * With the typewriter off, the whole page is visible at once and the next
- * action turns the page.
+ * The right side advances one sentence. A new sentence types out, and a sentence
+ * already reached opens in full. The left side returns one sentence, fully shown.
+ * The first sentence asks for the previous page; the last asks for the next.
+ * Auto Play still waits until the current sentence is fully visible.
  */
 object SentenceReveal {
     fun pageIndexForOffset(pages: List<ReadingPage>, offset: Int): Int {
@@ -33,6 +35,29 @@ object SentenceReveal {
         return revealSentence(1, first)
     }
 
+    /**
+     * A page the reader has already opened is shown in full.
+     * The typewriter does not restart, and progress stays at the start of the page.
+     */
+    fun revisit(page: ReadingPage): PageReveal {
+        val first = page.sentences.firstOrNull()
+            ?: return PageReveal(0, 0, false, page.start)
+        return wholePage(page, first.startOffset)
+    }
+
+    /**
+     * Going backward opens the page in full.
+     * Going forward does too once [furthestReachedOffset] has passed the page start.
+     * A page that starts after that offset is new and keeps the progressive reveal.
+     */
+    fun opensInFull(forward: Boolean, pageStart: Int, furthestReachedOffset: Int): Boolean {
+        if (!forward) return true
+        return pageStart <= furthestReachedOffset
+    }
+
+    /** Last offset on a page the reader has left. The next page starts after it. */
+    fun coveredOffset(page: ReadingPage): Int = (page.end - 1).coerceAtLeast(page.start)
+
     fun restore(page: ReadingPage, offset: Int, typewriterEnabled: Boolean): PageReveal {
         val positioned = positionedOnPage(page, offset)
         if (!typewriterEnabled && page.sentences.isNotEmpty()) {
@@ -41,27 +66,41 @@ object SentenceReveal {
         return positioned
     }
 
-    fun onTap(page: ReadingPage, reveal: PageReveal, typewriterEnabled: Boolean): RevealStep {
+    fun onTap(
+        page: ReadingPage,
+        reveal: PageReveal,
+        typewriterEnabled: Boolean,
+        furthestReachedOffset: Int = -1,
+    ): RevealStep {
         if (page.sentences.isEmpty()) return RevealStep.NextPage
-        if (!typewriterEnabled) {
-            if (reveal.revealedCount < page.sentences.size) {
-                return RevealStep.Updated(wholePage(page, reveal.anchorOffset))
-            }
-            return RevealStep.NextPage
-        }
-        if (reveal.revealedCount <= 0) return RevealStep.Updated(enter(page, typewriterEnabled))
-        val index = (reveal.revealedCount - 1).coerceIn(0, page.sentences.lastIndex)
-        val current = page.sentences[index]
-        if (reveal.typing && reveal.typedChars < current.text.length) {
-            return RevealStep.Updated(
-                reveal.copy(typedChars = current.text.length, typing = false, anchorOffset = current.startOffset),
+        if (reveal.revealedCount >= page.sentences.size && reveal.revealedCount > 0) return RevealStep.NextPage
+        val nextIndex = reveal.revealedCount.coerceAtLeast(0)
+        if (nextIndex > page.sentences.lastIndex) return RevealStep.NextPage
+        val sentence = page.sentences[nextIndex]
+        val seen = sentence.startOffset <= furthestReachedOffset
+        return RevealStep.Updated(showSentence(page, nextIndex, immediate = !typewriterEnabled || seen))
+    }
+
+    /** One sentence backward. The destination is fully shown and does not type out again. */
+    fun onPrevious(page: ReadingPage, reveal: PageReveal): RevealStep {
+        if (page.sentences.isEmpty() || reveal.revealedCount <= 1) return RevealStep.PreviousPage
+        val current = (reveal.revealedCount - 1).coerceIn(0, page.sentences.lastIndex)
+        if (current <= 0) return RevealStep.PreviousPage
+        return RevealStep.Updated(showSentence(page, current - 1, immediate = true))
+    }
+
+    fun showSentence(page: ReadingPage, sentenceIndex: Int, immediate: Boolean): PageReveal {
+        val sentence = page.sentences.getOrNull(sentenceIndex)
+            ?: return PageReveal(0, 0, false, page.start)
+        if (immediate) {
+            return PageReveal(
+                revealedCount = sentenceIndex + 1,
+                typedChars = sentence.text.length,
+                typing = false,
+                anchorOffset = sentence.startOffset,
             )
         }
-        if (reveal.revealedCount < page.sentences.size) {
-            val nextIndex = reveal.revealedCount + 1
-            return RevealStep.Updated(revealSentence(nextIndex, page.sentences[nextIndex - 1]))
-        }
-        return RevealStep.NextPage
+        return revealSentence(sentenceIndex + 1, sentence)
     }
 
     /**

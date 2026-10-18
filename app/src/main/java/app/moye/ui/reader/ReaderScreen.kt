@@ -182,7 +182,8 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                     onTap = { fraction ->
                         when (ReadingZones.fromX(fraction)) {
                             ReadingZone.CONTROLS -> viewModel.toggleControls()
-                            ReadingZone.PREVIOUS_PAGE -> viewModel.turnPage(forward = false)
+                            ReadingZone.PREVIOUS_PAGE ->
+                                if (state.paged) viewModel.turnPage(forward = false) else viewModel.onPreviousSentence()
                             ReadingZone.ADVANCE -> if (state.paged) viewModel.turnPage(forward = true) else viewModel.onReadingTap()
                         }
                     },
