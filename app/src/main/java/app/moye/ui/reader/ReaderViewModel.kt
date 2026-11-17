@@ -1,5 +1,6 @@
 package app.moye.ui.reader
 
+import android.util.Log
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.ViewModel
@@ -467,13 +468,19 @@ class ReaderViewModel(
             while (isActive && autoPlay.isCurrent(gateTicket)) {
                 val snapshot = _state.value
                 val startedAt = now()
+                val remaining = remainingTypewriterMillis(snapshot)
                 val scheduleTicket = autoPlaySchedule.replace(
                     nowMillis = startedAt,
                     speed = snapshot.settings.playbackSpeed,
-                    typewriterDurationMillis = remainingTypewriterMillis(snapshot),
+                    typewriterDurationMillis = remaining,
                     typewriterEnabled = snapshot.settings.typewriterEnabled,
                 )
                 val wait = autoPlaySchedule.delayMillis(startedAt)
+                Log.d(
+                    "AutoPlayTiming",
+                    "schedule revealed=${snapshot.revealedCount} typing=${snapshot.typing} " +
+                        "typed=${snapshot.typedChars} remaining=$remaining wait=$wait at=$startedAt",
+                )
                 if (wait > 0L) delay(wait)
                 if (!isActive || !autoPlay.isCurrent(gateTicket) || !autoPlaySchedule.isCurrent(scheduleTicket)) return@launch
                 while (isActive && autoPlay.isCurrent(gateTicket) && autoPlaySchedule.isCurrent(scheduleTicket) && _state.value.typing) {
@@ -502,11 +509,31 @@ class ReaderViewModel(
                 val sameSentence = step.reveal.revealedCount == snapshot.revealedCount &&
                     step.reveal.anchorOffset == snapshot.offset
                 if (sameSentence) return true
+                val revealedIndex = step.reveal.revealedCount - 1
+                val revealed = page.sentences.getOrNull(revealedIndex)
+                Log.d(
+                    "AutoPlayTiming",
+                    "reveal #${step.reveal.revealedCount} para=${revealed?.paragraphIndex} " +
+                        "sent=${revealed?.sentenceIndex} len=${revealed?.text?.length} " +
+                        "typing=${step.reveal.typing} typed=${step.reveal.typedChars} at=${now()}",
+                )
                 applyReveal(step.reveal)
                 return true
             }
             RevealStep.NextPage -> {
                 if (epoch != pageEpoch || _state.value.pageIndex != snapshot.pageIndex) return true
+                val nextPage = snapshot.pages.getOrNull(snapshot.pageIndex + 1)
+                if (snapshot.settings.typewriterEnabled && SentenceReveal.continuesOnNextPage(page, nextPage)) {
+                    Log.d(
+                        "AutoPlayTiming",
+                        "holdPage page=${snapshot.pageIndex} (sentence continues onto next page) at=${now()}",
+                    )
+                    // The page ends in the middle of a sentence. Keep the current
+                    // page on screen and wait for a manual turn instead of starting
+                    // a whole new sentence cycle for the continuation on the next page.
+                    return true
+                }
+                Log.d("AutoPlayTiming", "turnPage page=${snapshot.pageIndex}->${snapshot.pageIndex + 1} at=${now()}")
                 if (!movePage(forward = true)) {
                     disarmPlayback()
                     return false
@@ -594,7 +621,10 @@ class ReaderViewModel(
                         state.copy(typedChars = next.typedChars, typing = next.typing)
                     }
                 }
-                if (!next.typing) break
+                if (!next.typing) {
+                    Log.d("AutoPlayTiming", "typedDone revealed=$revealedCount at=${now()}")
+                    break
+                }
             }
         }
     }

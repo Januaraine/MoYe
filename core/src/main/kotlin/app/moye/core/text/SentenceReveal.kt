@@ -58,6 +58,20 @@ object SentenceReveal {
     /** Last offset on a page the reader has left. The next page starts after it. */
     fun coveredOffset(page: ReadingPage): Int = (page.end - 1).coerceAtLeast(page.start)
 
+    /**
+     * True when the last sentence on [page] is the earlier part of a sentence that
+     * continues onto [next]. A sentence longer than one page is split into chunks
+     * that keep the same paragraph and sentence index, so the boundary is detected
+     * by comparing those two fields across the page edge. This is the only signal
+     * the reader uses to avoid treating the continuation as a brand-new sentence.
+     */
+    fun continuesOnNextPage(page: ReadingPage, next: ReadingPage?): Boolean {
+        val last = page.sentences.lastOrNull() ?: return false
+        val first = next?.sentences?.firstOrNull() ?: return false
+        return last.paragraphIndex == first.paragraphIndex &&
+            last.sentenceIndex == first.sentenceIndex
+    }
+
     fun restore(page: ReadingPage, offset: Int, typewriterEnabled: Boolean): PageReveal {
         val positioned = positionedOnPage(page, offset)
         if (!typewriterEnabled && page.sentences.isNotEmpty()) {
